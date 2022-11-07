@@ -106,12 +106,20 @@ See [examples/consumer-with-pool-and-batch.md](examples/consumer-with-pool-and-b
 ```sh
 # run rabbitmq
 docker-compose up rabbitmq
+```
 
+```sh
 # run producer
-go run examples/producer/main.go --rabbitmq-uri amqp://dev:dev@localhost:5672
+cd examples/producer/
+go mod download
+go run main.go --rabbitmq-uri amqp://dev:dev@localhost:5672
+```
 
+```sh
 # run consumer
-go run examples/consumer/main.go --rabbitmq-uri amqp://dev:dev@localhost:5672
+cd examples/consumer/
+go mod download
+go run main.go --rabbitmq-uri amqp://dev:dev@localhost:5672
 ```
 
 Then trigger network failure, by restarting rabbitmq:
