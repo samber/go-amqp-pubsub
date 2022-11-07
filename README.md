@@ -8,6 +8,8 @@
 
 ## How to
 
+During your tests, feel free to restart Rabbitmq. This library will reconnect automatically.
+
 ### Connect
 
 ```go
@@ -29,17 +31,13 @@ conn.Close()
 
 ```go
 import (
-	pubsub "github.com/samber/go-amqp-pubsub"
+    pubsub "github.com/samber/go-amqp-pubsub"
     "github.com/samber/lo"
     "github.com/samber/mo"
 )
 
 conn, err := pubsub.NewConnection("connection-1", pubsub.ConnectionOptions{
     URI: "amqp://dev:dev@localhost:5672",
-    Config: amqp.Config{
-        Dial:      amqp.DefaultDial(time.Second),
-    },
-
     LazyConnection: mo.Some(true),
 })
 
@@ -64,17 +62,13 @@ conn.Close()
 
 ```go
 import (
-	pubsub "github.com/samber/go-amqp-pubsub"
+    pubsub "github.com/samber/go-amqp-pubsub"
     "github.com/samber/lo"
     "github.com/samber/mo"
 )
 
 conn, err := pubsub.NewConnection("connection-1", pubsub.ConnectionOptions{
     URI: "amqp://dev:dev@localhost:5672",
-    Config: amqp.Config{
-        Dial:      amqp.DefaultDial(time.Second),
-    },
-
     LazyConnection: mo.Some(true),
 })
 
