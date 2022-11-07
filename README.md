@@ -1,17 +1,23 @@
 
 # Pub/Sub framework for RabbitMQ and Go
 
-- Based on github.com/streadway/amqp driver
+- Based on github.com/rabbitmq/amqp091-go driver
 - Resilient to network failure
 - Auto reconnect: recreate channels, bindings, producers, consumers...
+- Dead letter queue on message rejection
 
 ## How to
 
 ### Connect
 
 ```go
-conn, err := pubsub.NewAMQPConnection("connection-1", pubsub.AMQPConnectionOptions{
-    URI: *rabbitmqURI,
+import pubsub "github.com/samber/go-amqp-pubsub"
+
+conn, err := pubsub.NewConnection("connection-1", pubsub.ConnectionOptions{
+    URI: "amqp://dev:dev@localhost:5672",
+    Config: amqp.Config{
+        Dial:      amqp.DefaultDial(time.Second),
+    },
 })
 
 // ...
@@ -22,16 +28,29 @@ conn.Close()
 ### Producer
 
 ```go
-conn, err := pubsub.NewAMQPConnection("connection-1", pubsub.AMQPConnectionOptions{
-    URI: *rabbitmqURI,
+import (
+	pubsub "github.com/samber/go-amqp-pubsub"
+    "github.com/samber/lo"
+    "github.com/samber/mo"
+)
+
+conn, err := pubsub.NewConnection("connection-1", pubsub.ConnectionOptions{
+    URI: "amqp://dev:dev@localhost:5672",
+    Config: amqp.Config{
+        Dial:      amqp.DefaultDial(time.Second),
+    },
+
+    LazyConnection: mo.Some(true),
 })
 
-producer, err := pubsub.NewAMQPProducer("producer-1", conn, pubsub.AMQPProducerOptions{
-    ExchangeName:  "product.event",
-    ExchangeKind: pubsub.ExchangeKindTopic,
+producer := pubsub.NewProducer(conn, "producer-1", pubsub.ProducerOptions{
+    Exchange: pubsub.ProducerOptionsExchange{
+        Name: "product.event",
+        Kind: pubsub.ExchangeKindTopic,
+    },
 })
 
-err := producer.Publish("product.added", amqp.Publishing{
+err := producer.Publish(routingKey, false, false, amqp.Publishing{
     ContentType:  "application/json",
     DeliveryMode: amqp.Persistent,
     Body:         []byte(`{"hello": "world"}`),
@@ -44,66 +63,71 @@ conn.Close()
 ### Consumer
 
 ```go
-conn, err := pubsub.NewAMQPConnection("connection-1", pubsub.AMQPConnectionOptions{
-    URI: *rabbitmqURI,
+import (
+	pubsub "github.com/samber/go-amqp-pubsub"
+    "github.com/samber/lo"
+    "github.com/samber/mo"
+)
+
+conn, err := pubsub.NewConnection("connection-1", pubsub.ConnectionOptions{
+    URI: "amqp://dev:dev@localhost:5672",
+    Config: amqp.Config{
+        Dial:      amqp.DefaultDial(time.Second),
+    },
+
+    LazyConnection: mo.Some(true),
 })
 
-bindings := []pubsub.AMQPConsumerBinding{
-    {ExchangeName: "product.event", Key: "product.added"},
+consumer := pubsub.NewConsumer(conn, "consumer-1", pubsub.ConsumerOptions{
+    Queue: pubsub.ConsumerOptionsQueue{
+        Name: "product.onEdit",
+    },
+    Bindings: []pubsub.ConsumerOptionsBinding{
+        {ExchangeName: "product.event", RoutingKey: "product.created"},
+        {ExchangeName: "product.event", RoutingKey: "product.updated"},
+    },
+    Message: pubsub.ConsumerOptionsMessage{
+        PrefetchCount: mo.Some(100),
+    },
+    EnableDeadLetter: mo.Some(true),     // will create a "product.onEdit.deadLetter" DL queue
+})
+
+for msg := range consumer.Consume() {
+    lo.Try0(func() { // handle exceptions
+        // ...
+        msg.Ack(false)
+    })
 }
-
-consumer, _ := pubsub.NewAMQPConsumer("consumer-1", conn, pubsub.AMQPConsumerOptions{
-    QueueName:        "product.onAdded",
-    QueueBindings:    bindings,
-    MessagePrefetch:  10,
-    EnableDeadLetter: true,
-    LazyConnection:   true,
-})
-
-// Run 10 workers using the `delivery` channel
-for i := 0; i < 10; i++ {
-    go func(id int) {
-        delivery := consumer.Consume()
-
-        for msg := range delivery {
-            // ...
-    		msg.Ack(false)
-        }
-    }()
-}
-
-// Run 10 workers using a callback
-consumer.AddWorkers(true, 10, func (id int, msg amqp.Delivery) {
-    // ...
-    msg.Ack(false)
-})
 
 consumer.Close()
 conn.Close()
 ```
 
-## Run example
+### Consumer with pooling and batching
+
+See [examples/consumer-with-pool-and-batch.md](examples/consumer-with-pool-and-batch.md).
+
+## Run examples
 
 ```sh
-docker-compose up -d rabbitmq
-make dev
+# run rabbitmq
+docker-compose up rabbitmq
+
+# run producer
+go run example/producer/main.go --rabbitmq-uri amqp://dev:dev@localhost:5672
+
+# run consumer
+go run example/consumer/main.go --rabbitmq-uri amqp://dev:dev@localhost:5672
 ```
 
 Then trigger network failure, by restarting rabbitmq:
 
 ```sh
 docker-compose restart rabbitmq
-
-# or
-
-docker-compose kill rabbitmq
-docker-compose up -d rabbitmq
 ```
 
 ## Todo
 
 - Connection pooling (eg: 10 connections, 100 channels per connections)
-- Support for advanced features from github.com/streadway/amqp
 - Better documentation
 - Testing + CI
-- See `@TODO` in code

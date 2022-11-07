@@ -1,7 +1,5 @@
 package pubsub
 
-type RoutingKey string
-
 type ExchangeKind string
 
 const (

@@ -1,187 +1,195 @@
 package pubsub
 
 import (
+	"context"
 	"fmt"
-	"reflect"
-	"sync"
-	"time"
 
-	"github.com/streadway/amqp"
+	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/samber/lo"
+	"github.com/samber/mo"
 )
 
-type AMQPProducerOptions struct {
-	ExchangeName       string
-	ExchangeKind       ExchangeKind
-	ExchangeDurable    *bool // default true
-	ExchangeAutoDelete *bool // default false
-	LazyConnection     bool  // default false
+type ProducerOptionsExchange struct {
+	Name string
+	Kind ExchangeKind
+
+	// optional arguments
+	Durable    mo.Option[bool]       // default true
+	AutoDelete mo.Option[bool]       // default false
+	Internal   mo.Option[bool]       // default false
+	NoWait     mo.Option[bool]       // default false
+	Args       mo.Option[amqp.Table] // default nil
 }
 
-type AMQPProducer struct {
-	Name    string
-	options AMQPProducerOptions
-
-	conn *AMQPConnection
-
-	channel             *amqp.Channel
-	expectOpenedChannel bool
-	connecting          *sync.Mutex
+type ProducerOptions struct {
+	Exchange ProducerOptionsExchange
 }
 
-func NewAMQPProducer(name string, conn *AMQPConnection, opt AMQPProducerOptions) (*AMQPProducer, error) {
-	if conn == nil {
-		panic("amqp connection cannot be nil")
-	}
+type Producer struct {
+	conn    *Connection
+	name    string
+	options ProducerOptions
 
-	if opt.ExchangeDurable == nil {
-		tRue := true
-		opt.ExchangeDurable = &tRue
-	}
+	channel *amqp.Channel
+	done    chan struct{}
+}
 
-	if opt.ExchangeAutoDelete == nil {
-		fAlse := false
-		opt.ExchangeAutoDelete = &fAlse
-	}
-
-	p := &AMQPProducer{
-		Name:    name,
+func NewProducer(conn *Connection, name string, opt ProducerOptions) *Producer {
+	p := &Producer{
+		conn:    conn,
+		name:    name,
 		options: opt,
 
-		conn: conn,
-
-		channel:             nil,
-		expectOpenedChannel: false,
-		connecting:          new(sync.Mutex),
+		channel: nil,
+		done:    make(chan struct{}, 1),
 	}
 
-	if !opt.LazyConnection {
-		if err := p.lazyConnection(); err != nil {
-			// we return producer anyway, because amqp driver can reconnect itself
-			return p, err
-		}
-	}
+	go p.lifecycle()
 
-	return p, nil
+	return p
 }
 
-func (p *AMQPProducer) lazyConnection() error {
-	p.connecting.Lock()
-	defer p.connecting.Unlock()
+func (p *Producer) lifecycle() {
+	cancel, ch := p.conn.ListenConnection()
+	onConnect := make(chan *amqp.Connection, 42)
+	onDisconnect := make(chan struct{}, 42)
 
-	if !p.IsClosed() {
-		return nil
+	for {
+		select {
+		case conn := <-ch:
+			if conn != nil {
+				onConnect <- conn
+			} else {
+				onDisconnect <- struct{}{}
+			}
+
+		case conn := <-onConnect:
+			err := p.setupProducer(conn)
+			if err != nil {
+				logger("AMQP producer '%s': %s", p.name, err.Error())
+				onDisconnect <- struct{}{}
+			}
+
+		case <-onDisconnect:
+			if p.channel != nil {
+				lo.Try0(func() { p.channel.Close() })
+
+				p.channel = nil
+			}
+
+		case <-p.done:
+			cancel()
+			return
+		}
 	}
+}
 
-	if p.conn.IsClosed() {
-		return fmt.Errorf("AMQP connection lost for producer '%s'", p.Name)
-	}
+func (p *Producer) Close() error {
+	// @TODO: should be blocking, until everything is properly closed.
+	p.done <- struct{}{}
+	return nil
+}
 
+func (p *Producer) setupProducer(conn *amqp.Connection) error {
 	// create a channel dedicated to this producer
-	channel, err := p.conn.conn.Channel()
+	channel, err := conn.Channel()
 	if err != nil {
 		return err
 	}
 
 	// create exchange if not exist
 	err = channel.ExchangeDeclare(
-		p.options.ExchangeName,
-		string(p.options.ExchangeKind),
-		*p.options.ExchangeDurable,
-		*p.options.ExchangeAutoDelete,
-		false,
-		false,
-		nil,
+		p.options.Exchange.Name,
+		string(p.options.Exchange.Kind),
+		p.options.Exchange.Durable.OrElse(true),
+		p.options.Exchange.AutoDelete.OrElse(false),
+		p.options.Exchange.Internal.OrElse(false),
+		p.options.Exchange.NoWait.OrElse(false),
+		p.options.Exchange.Args.OrElse(nil),
 	)
 	if err != nil {
+		_ = channel.Close()
 		return err
 	}
 
-	// @TODO: we may have a leak of channels if it failes before this line
 	p.channel = channel
-	p.expectOpenedChannel = true
 
-	go p.handleClose()
-
-	return nil
-}
-
-func (p *AMQPProducer) handleClose() {
-	for {
-		if p.channel == nil {
-			return
-		}
-
-		reason, ok := <-p.channel.NotifyClose(make(chan *amqp.Error))
-
-		// exit this goroutine if closed by developer
-		if !ok || !p.expectOpenedChannel {
-			p.Close() // close again, ensure closed flag set when connection closed
-			return
-		}
-
-		p.channel = nil
-		logger.Printf("Connection to AMQP lost for producer '%s'. Reason: %s. Is closed: %t.\n", p.Name, reason, p.IsClosed())
-
-		// reconnect if not closed by developer
-		for {
-			if !p.expectOpenedChannel {
-				return
-			}
-
-			// We don't retry when the producer connect in lazy mode (when message is sent).
-			if p.options.LazyConnection {
-				return
-			}
-
-			err := p.lazyConnection()
-			if err == nil {
-				logger.Printf("Connection to AMQP restored for producer '%s'\n", p.Name)
-				return
-			}
-
-			// wait 2s for connection retry
-			time.Sleep(*p.conn.options.Retry)
-		}
-	}
-}
-
-func (p *AMQPProducer) Close() error {
-	p.connecting.Lock()
-	defer p.connecting.Unlock()
-
-	p.expectOpenedChannel = false
-	if p.channel != nil {
-		c := p.channel
-		p.channel = nil
-
-		return c.Close()
-	}
+	go p.handleCancel(conn, channel)
 
 	return nil
 }
 
-func (p *AMQPProducer) IsClosed() bool {
-	return !p.expectOpenedChannel || p.conn.IsClosed() || p.channel == nil
+func (p *Producer) handleCancel(conn *amqp.Connection, channel *amqp.Channel) {
+	onClose := channel.NotifyClose(make(chan *amqp.Error))
+	onCancel := channel.NotifyCancel(make(chan string))
+
+	select {
+	case err := <-onClose:
+		if err != nil {
+			logger("AMQP channel '%s': %s", p.name, err.Error())
+		}
+	case msg := <-onCancel:
+		logger("AMQP channel '%s': %v", p.name, msg)
+
+		lo.Try0(func() { channel.Close() })
+
+		err := p.setupProducer(conn)
+		if err != nil {
+			logger("AMQP producer '%s': %s", p.name, err.Error())
+		}
+	}
 }
 
-func (p *AMQPProducer) Publish(routingKey RoutingKey, msg amqp.Publishing) error {
-	err := p.lazyConnection()
-	if err != nil {
-		return fmt.Errorf("Cannot publish message to RabbitMQ: %s.", err.Error())
+/**
+ * API
+ */
+
+func (p *Producer) PublishWithContext(ctx context.Context, routingKey string, mandatory bool, immediate bool, msg amqp.Publishing) error {
+	if p.channel == nil {
+		return fmt.Errorf("AMQP: channel '%s' not available", p.name)
 	}
 
-	if reflect.ValueOf(msg.AppId).IsZero() {
-		msg.AppId = p.Name
-	}
-	if reflect.ValueOf(msg.Timestamp).IsZero() {
-		msg.Timestamp = time.Now()
+	return p.channel.PublishWithContext(
+		ctx,
+		p.options.Exchange.Name,
+		routingKey,
+		mandatory,
+		immediate,
+		msg,
+	)
+}
+
+func (p *Producer) PublishWithDeferredConfirmWithContext(ctx context.Context, routingKey string, mandatory bool, immediate bool, msg amqp.Publishing) (*amqp.DeferredConfirmation, error) {
+	if p.channel == nil {
+		return nil, fmt.Errorf("AMQP: channel '%s' not available", p.name)
 	}
 
-	return p.channel.Publish(
-		p.options.ExchangeName, // exchange
-		string(routingKey),     // routing key
-		false,                  // mandatory
-		false,                  // immediate
-		msg,                    // publishing
+	return p.channel.PublishWithDeferredConfirmWithContext(
+		ctx,
+		p.options.Exchange.Name,
+		routingKey,
+		mandatory,
+		immediate,
+		msg,
+	)
+}
+
+func (p *Producer) Publish(routingKey string, mandatory bool, immediate bool, msg amqp.Publishing) error {
+	return p.PublishWithContext(
+		context.Background(),
+		routingKey,
+		mandatory,
+		immediate,
+		msg,
+	)
+}
+
+func (p *Producer) PublishWithDeferredConfirm(routingKey string, mandatory bool, immediate bool, msg amqp.Publishing) (*amqp.DeferredConfirmation, error) {
+	return p.PublishWithDeferredConfirmWithContext(
+		context.Background(),
+		routingKey,
+		mandatory,
+		immediate,
+		msg,
 	)
 }
