@@ -133,3 +133,4 @@ docker-compose restart rabbitmq
 - Connection pooling (eg: 10 connections, 100 channels per connections)
 - Better documentation
 - Testing + CI
+- BatchPublish + PublishWithConfirmation + BatchPublishWithConfirmation

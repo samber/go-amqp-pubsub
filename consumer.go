@@ -20,6 +20,9 @@ type ConsumerOptionsQueue struct {
 type ConsumerOptionsBinding struct {
 	ExchangeName string
 	RoutingKey   string
+
+	// optional arguments
+	Args mo.Option[amqp.Table] // default nil
 }
 
 type ConsumerOptionsMessage struct {
@@ -35,7 +38,8 @@ type ConsumerOptions struct {
 	Message  ConsumerOptionsMessage
 
 	// optional arguments
-	EnableDeadLetter mo.Option[bool] // default false
+	EnableDeadLetter mo.Option[bool]       // default false
+	ConsumeArgs      mo.Option[amqp.Table] // default nil
 }
 
 type Consumer struct {
@@ -141,7 +145,7 @@ func (c *Consumer) setupConsumer(conn *amqp.Connection) error {
 			b.RoutingKey,
 			b.ExchangeName,
 			false,
-			nil,
+			b.Args.OrElse(nil),
 		)
 		if err != nil {
 			_ = channel.Close()
@@ -228,7 +232,7 @@ func (c *Consumer) onMessage(channel *amqp.Channel) error {
 		c.options.Queue.ExclusiveConsumer.OrElse(false),
 		false,
 		false,
-		nil,
+		c.options.ConsumeArgs.OrElse(nil),
 	)
 	if err != nil {
 		return err
