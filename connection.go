@@ -27,10 +27,12 @@ type Connection struct {
 	// should be a generic sync.Map
 	channelsMutex sync.Mutex
 	channels      map[string]chan *amqp.Connection
-	done          chan struct{}
+	done          *rpc[struct{}, struct{}]
 }
 
 func NewConnection(name string, opt ConnectionOptions) (*Connection, error) {
+	doneCh := make(chan struct{}, 0)
+
 	c := &Connection{
 		conn:    nil,
 		name:    name,
@@ -38,7 +40,7 @@ func NewConnection(name string, opt ConnectionOptions) (*Connection, error) {
 
 		channelsMutex: sync.Mutex{},
 		channels:      map[string]chan *amqp.Connection{},
-		done:          make(chan struct{}, 1),
+		done:          newRPC[struct{}, struct{}](doneCh),
 	}
 
 	err := c.lifecycle()
@@ -82,7 +84,7 @@ func (c *Connection) lifecycle() error {
 					heartbeat <- struct{}{}
 				}
 
-			case <-c.done:
+			case req := <-c.done.C:
 				// disconnect
 				if c.conn != nil {
 					err := c.conn.Close()
@@ -94,9 +96,10 @@ func (c *Connection) lifecycle() error {
 				}
 
 				c.notifyChannels(nil)
-				close(c.done)
 
 				// @TODO we should requeue messages
+
+				req.B(struct{}{})
 
 				return
 			}
@@ -107,8 +110,8 @@ func (c *Connection) lifecycle() error {
 }
 
 func (c *Connection) Close() error {
-	// @TODO: should be blocking, until everything is properly closed.
-	c.done <- struct{}{}
+	_ = c.done.Send(struct{}{})
+	safeClose(c.done.C)
 	return nil
 }
 

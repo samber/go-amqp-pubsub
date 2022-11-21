@@ -1,6 +1,9 @@
 package pubsub
 
 import (
+	"fmt"
+	"sync"
+
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/samber/lo"
 	"github.com/samber/mo"
@@ -47,18 +50,27 @@ type Consumer struct {
 	name    string
 	options ConsumerOptions
 
+	mu       sync.Mutex
 	delivery chan *amqp.Delivery
-	done     chan struct{}
+	done     *rpc[struct{}, struct{}]
+
+	bindingUpdates *rpc[lo.Tuple2[bool, ConsumerOptionsBinding], error]
 }
 
 func NewConsumer(conn *Connection, name string, opt ConsumerOptions) *Consumer {
+	doneCh := make(chan struct{}, 0)
+	bindingUpdatesCh := make(chan<- lo.Tuple2[bool, ConsumerOptionsBinding], 10)
+
 	c := Consumer{
 		conn:    conn,
 		name:    name,
 		options: opt,
 
+		mu:       sync.Mutex{},
 		delivery: make(chan *amqp.Delivery),
-		done:     make(chan struct{}, 1),
+		done:     newRPC[struct{}, struct{}](doneCh),
+
+		bindingUpdates: newRPC[lo.Tuple2[bool, ConsumerOptionsBinding], error](bindingUpdatesCh),
 	}
 
 	go c.lifecycle()
@@ -89,18 +101,20 @@ func (c *Consumer) lifecycle() {
 
 		case <-onDisconnect:
 
-		case <-c.done:
+		case req := <-c.done.C:
 			cancel()
-			lo.Try0(func() { close(c.delivery) })
+			safeClose(c.bindingUpdates.C)
+			safeClose(c.delivery)
 
+			req.B(struct{}{})
 			return
 		}
 	}
 }
 
 func (c *Consumer) Close() error {
-	// @TODO: should be blocking
-	c.done <- struct{}{}
+	_ = c.done.Send(struct{}{})
+	safeClose(c.done.C)
 	return nil
 }
 
@@ -138,6 +152,16 @@ func (c *Consumer) setupConsumer(conn *amqp.Connection) error {
 		return err
 	}
 
+	err = channel.Qos(
+		c.options.Message.PrefetchCount.OrElse(0),
+		c.options.Message.PrefetchSize.OrElse(0),
+		false,
+	)
+	if err != nil {
+		_ = channel.Close()
+		return err
+	}
+
 	// binding exchange->queue
 	for _, b := range c.options.Bindings {
 		err = channel.QueueBind(
@@ -153,19 +177,15 @@ func (c *Consumer) setupConsumer(conn *amqp.Connection) error {
 		}
 	}
 
-	err = channel.Qos(
-		c.options.Message.PrefetchCount.OrElse(0),
-		c.options.Message.PrefetchSize.OrElse(0),
-		false,
-	)
+	err = c.onMessage(channel)
 	if err != nil {
 		_ = channel.Close()
 		return err
 	}
 
-	go c.handleCancel(conn, channel)
+	go c.onChannelEvent(conn, channel)
 
-	return c.onMessage(channel)
+	return nil
 }
 
 func (c *Consumer) setupDeadLetter(channel *amqp.Channel) (map[string]any, error) {
@@ -203,25 +223,72 @@ func (c *Consumer) setupDeadLetter(channel *amqp.Channel) (map[string]any, error
 	return deadLetterArgs, nil
 }
 
-func (c *Consumer) handleCancel(conn *amqp.Connection, channel *amqp.Channel) {
+func (c *Consumer) onChannelEvent(conn *amqp.Connection, channel *amqp.Channel) {
 	onClose := channel.NotifyClose(make(chan *amqp.Error))
 	onCancel := channel.NotifyCancel(make(chan string))
 
-	select {
-	case err := <-onClose:
-		if err != nil {
-			logger("AMQP channel '%s': %s", c.name, err.Error())
-		}
-	case msg := <-onCancel:
-		logger("AMQP channel '%s': %v", c.name, msg)
+	defer lo.Try0(func() { channel.Close() })
 
-		err := c.setupConsumer(conn)
-		if err != nil {
-			logger("AMQP consumer '%s': %s", c.name, err.Error())
+	for {
+		select {
+		case err := <-onClose:
+			if err != nil {
+				logger("AMQP channel '%s': %s", c.name, err.Error())
+			}
+
+			return
+
+		case msg := <-onCancel:
+			logger("AMQP channel '%s': %v", c.name, msg)
+
+			err := c.setupConsumer(conn)
+			if err != nil {
+				logger("AMQP consumer '%s': %s", c.name, err.Error())
+			}
+
+			return
+
+		case update := <-c.bindingUpdates.C:
+			err := c.onBindingUpdate(channel, update.A)
+			if err != nil {
+				logger("AMQP consumer '%s': %s", c.name, err.Error())
+				update.B(err)
+			} else {
+				update.B(nil)
+			}
 		}
 	}
+}
 
-	lo.Try0(func() { channel.Close() })
+func (c *Consumer) onBindingUpdate(channel *amqp.Channel, update lo.Tuple2[bool, ConsumerOptionsBinding]) error {
+	adding, binding := update.Unpack()
+
+	err := lo.TernaryF(
+		adding,
+		func() error {
+			return channel.QueueBind(
+				c.options.Queue.Name,
+				binding.RoutingKey,
+				binding.ExchangeName,
+				false,
+				binding.Args.OrElse(nil),
+			)
+		}, func() error {
+			return channel.QueueUnbind(
+				c.options.Queue.Name,
+				binding.RoutingKey,
+				binding.ExchangeName,
+				binding.Args.OrElse(nil),
+			)
+		},
+	)
+
+	if err != nil {
+		_ = channel.Close()
+		return fmt.Errorf("failed to (un)bind queue '%s' to exchange '%s' using routing key '%s': %s", c.options.Queue.Name, binding.ExchangeName, binding.RoutingKey, err.Error())
+	}
+
+	return nil
 }
 
 func (c *Consumer) onMessage(channel *amqp.Channel) error {
@@ -256,4 +323,44 @@ func (c *Consumer) onMessage(channel *amqp.Channel) error {
 
 func (c *Consumer) Consume() <-chan *amqp.Delivery {
 	return c.delivery
+}
+
+func (c *Consumer) AddBinding(exchangeName string, routingKey string, args mo.Option[amqp.Table]) error {
+	binding := ConsumerOptionsBinding{
+		ExchangeName: exchangeName,
+		RoutingKey:   routingKey,
+		Args:         args,
+	}
+
+	err := c.bindingUpdates.Send(lo.T2(true, binding))
+	if err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	c.options.Bindings = append(c.options.Bindings, binding)
+	c.mu.Unlock()
+
+	return nil
+}
+
+func (c *Consumer) RemoveBinding(exchangeName string, routingKey string, args mo.Option[amqp.Table]) error {
+	binding := ConsumerOptionsBinding{
+		ExchangeName: exchangeName,
+		RoutingKey:   routingKey,
+		Args:         args,
+	}
+
+	err := c.bindingUpdates.Send(lo.T2(false, binding))
+	if err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	c.options.Bindings = lo.Filter(c.options.Bindings, func(item ConsumerOptionsBinding, _ int) bool {
+		return item.ExchangeName != exchangeName && item.RoutingKey != routingKey
+	})
+	c.mu.Unlock()
+
+	return nil
 }

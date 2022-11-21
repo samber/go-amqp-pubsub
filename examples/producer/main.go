@@ -36,7 +36,7 @@ func main() {
 			Dial:      amqp.DefaultDial(time.Second),
 			Heartbeat: time.Second,
 		},
-		LazyConnection: mo.Some(true),
+		LazyConnection: mo.Some(false),
 	})
 	if err != nil {
 		// We ignore error, since it will reconnect automatically when available.
@@ -67,8 +67,8 @@ func publishMessages(producer *pubsub.Producer) {
 	//		- docker-compose kill rabbitmq
 	//		- docker-compose up rabbitmq
 
-	for i := 0; i < 1000; i++ {
-		time.Sleep(100 * time.Millisecond)
+	for i := 0; i < 100000; i++ {
+		time.Sleep(100 * time.Microsecond)
 
 		routingKey := productRk[i%len(productRk)]
 

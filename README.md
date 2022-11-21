@@ -4,6 +4,7 @@
 - Based on github.com/rabbitmq/amqp091-go driver
 - Resilient to network failure
 - Auto reconnect: recreate channels, bindings, producers, consumers...
+- Hot update of queue bindings (thread-safe)
 - Dead letter queue on message rejection
 
 ## How to

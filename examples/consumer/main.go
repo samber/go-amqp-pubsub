@@ -14,6 +14,8 @@ import (
 var rabbitmqURI = flag.String("rabbitmq-uri", "amqp://dev:dev@localhost:5672", "RabbitMQ URI")
 
 const (
+	queueName string = "product.onEdit"
+
 	routingKeyProductCreated string = "product.created"
 	routingKeyProductUpdated string = "product.updated"
 	routingKeyProductRemoved string = "product.removed"
@@ -36,7 +38,7 @@ func main() {
 			Dial:      amqp.DefaultDial(time.Second),
 			Heartbeat: time.Second,
 		},
-		LazyConnection: mo.Some(true),
+		LazyConnection: mo.Some(false),
 	})
 	if err != nil {
 		// We ignore error, since it will reconnect automatically when available.
@@ -45,7 +47,7 @@ func main() {
 
 	consumer := pubsub.NewConsumer(conn, "example-consumer-1", pubsub.ConsumerOptions{
 		Queue: pubsub.ConsumerOptionsQueue{
-			Name: "product.onEdit",
+			Name: queueName,
 		},
 		Bindings: []pubsub.ConsumerOptionsBinding{
 			// crud
@@ -53,7 +55,7 @@ func main() {
 			{ExchangeName: "product.event", RoutingKey: "product.updated"},
 		},
 		Message: pubsub.ConsumerOptionsMessage{
-			PrefetchCount: mo.Some(100),
+			PrefetchCount: mo.Some(1000),
 		},
 		EnableDeadLetter: mo.Some(true),
 	})

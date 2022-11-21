@@ -31,17 +31,19 @@ type Producer struct {
 	options ProducerOptions
 
 	channel *amqp.Channel
-	done    chan struct{}
+	done    *rpc[struct{}, struct{}]
 }
 
 func NewProducer(conn *Connection, name string, opt ProducerOptions) *Producer {
+	doneCh := make(chan struct{}, 0)
+
 	p := &Producer{
 		conn:    conn,
 		name:    name,
 		options: opt,
 
 		channel: nil,
-		done:    make(chan struct{}, 1),
+		done:    newRPC[struct{}, struct{}](doneCh),
 	}
 
 	go p.lifecycle()
@@ -77,16 +79,17 @@ func (p *Producer) lifecycle() {
 				p.channel = nil
 			}
 
-		case <-p.done:
+		case req := <-p.done.C:
 			cancel()
+			req.B(struct{}{})
 			return
 		}
 	}
 }
 
 func (p *Producer) Close() error {
-	// @TODO: should be blocking, until everything is properly closed.
-	p.done <- struct{}{}
+	_ = p.done.Send(struct{}{})
+	safeClose(p.done.C)
 	return nil
 }
 

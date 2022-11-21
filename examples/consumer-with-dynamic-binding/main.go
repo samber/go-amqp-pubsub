@@ -3,8 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"strings"
-	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -17,6 +15,8 @@ import (
 var rabbitmqURI = flag.String("rabbitmq-uri", "amqp://dev:dev@localhost:5672", "RabbitMQ URI")
 
 const (
+	queueName string = "product.onEdit"
+
 	routingKeyProductCreated string = "product.created"
 	routingKeyProductUpdated string = "product.updated"
 	routingKeyProductRemoved string = "product.removed"
@@ -48,7 +48,7 @@ func main() {
 
 	consumer := pubsub.NewConsumer(conn, "example-consumer-1", pubsub.ConsumerOptions{
 		Queue: pubsub.ConsumerOptionsQueue{
-			Name: "product.onEdit",
+			Name: queueName,
 		},
 		Bindings: []pubsub.ConsumerOptionsBinding{
 			// crud
@@ -56,14 +56,15 @@ func main() {
 			{ExchangeName: "product.event", RoutingKey: "product.updated"},
 		},
 		Message: pubsub.ConsumerOptionsMessage{
-			PrefetchCount: mo.Some(100),
+			PrefetchCount: mo.Some(1000),
 		},
 		EnableDeadLetter: mo.Some(true),
 	})
 
 	logrus.Info("***** Let's go! ***** ")
 
-	consumeMessages(5, consumer)
+	go fuzzyConcurrentQueueBinding(consumer)
+	consumeMessages(consumer)
 
 	logrus.Info("***** Finished! ***** ")
 
@@ -73,58 +74,46 @@ func main() {
 	logrus.Info("***** Closed! ***** ")
 }
 
-func consumeMessages(workers int, consumer *pubsub.Consumer) {
+func consumeMessages(consumer *pubsub.Consumer) {
 	// Feel free to kill RabbitMQ and restart it, to see what happens ;)
 	//		- docker-compose kill rabbitmq
 	//		- docker-compose up rabbitmq
 
-	wg := new(sync.WaitGroup)
-	wg.Add(workers)
-
 	channel := consumer.Consume()
-	channels := lo.ChannelDispatcher(channel, workers, 42, lo.DispatchingStrategyRoundRobin[*amqp.Delivery])
 
-	for i := range channels {
-		go func(index int) {
-			worker(index, channels[index])
-
-			wg.Done()
-		}(i)
-	}
-
-	wg.Wait()
-}
-
-func worker(workerID int, channel <-chan *amqp.Delivery) {
-	batchSize := 10
-	batchTime := time.Second
-
-	for {
-		buffer, length, _, ok := lo.BufferWithTimeout(channel, batchSize, batchTime)
-		if !ok {
-			break
-		} else if length == 0 {
-			continue
-		}
-
+	i := 0
+	for msg := range channel {
 		lo.Try0(func() { // handle exceptions
-			consumeMessage(workerID, buffer)
+			consumeMessage(i, msg)
 		})
+
+		i++
 	}
 }
 
-func consumeMessage(workerID int, messages []*amqp.Delivery) {
-	text := []string{fmt.Sprintf("WORKER %d - BATCH:", workerID)}
+func consumeMessage(index int, msg *amqp.Delivery) {
+	logrus.Infof("Consumed message [ID=%d, EX=%s, RK=%s] %s", index, msg.Exchange, msg.RoutingKey, string(msg.Body))
 
-	for i, message := range messages {
-		text = append(text, fmt.Sprintf("Consumed message [ID=%d, EX=%s, RK=%s] %s", workerID, message.Exchange, message.RoutingKey, string(message.Body)))
-
-		if (workerID+i)%10 == 0 {
-			message.Reject(false)
-		} else {
-			message.Ack(false)
-		}
+	if index%10 == 0 {
+		msg.Reject(false)
+	} else {
+		msg.Ack(false)
 	}
+}
 
-	logrus.Info(strings.Join(text, "\n") + "\n\n")
+func fuzzyConcurrentQueueBinding(consumer *pubsub.Consumer) {
+	for {
+		go func() {
+			exchangeName := "product.event"
+			routingKey := "fuzzy." + lo.RandomString(5, lo.AlphanumericCharset)
+
+			consumer.AddBinding(exchangeName, routingKey, mo.None[amqp.Table]())
+			time.Sleep(10 * time.Millisecond)
+			consumer.RemoveBinding(exchangeName, routingKey, mo.None[amqp.Table]())
+
+			fmt.Printf("fuzzy: binding/unbinding exchange '%s' to queue '%s' using routing key '%s'\n", exchangeName, queueName, routingKey)
+		}()
+
+		time.Sleep(10 * time.Millisecond)
+	}
 }
