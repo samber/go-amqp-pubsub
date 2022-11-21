@@ -31,7 +31,7 @@ type Connection struct {
 }
 
 func NewConnection(name string, opt ConnectionOptions) (*Connection, error) {
-	doneCh := make(chan struct{}, 0)
+	doneCh := make(chan struct{})
 
 	c := &Connection{
 		conn:    nil,

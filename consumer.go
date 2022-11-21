@@ -58,7 +58,7 @@ type Consumer struct {
 }
 
 func NewConsumer(conn *Connection, name string, opt ConsumerOptions) *Consumer {
-	doneCh := make(chan struct{}, 0)
+	doneCh := make(chan struct{})
 	bindingUpdatesCh := make(chan<- lo.Tuple2[bool, ConsumerOptionsBinding], 10)
 
 	c := Consumer{

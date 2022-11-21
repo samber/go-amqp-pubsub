@@ -37,6 +37,7 @@ import (
     "github.com/samber/mo"
 )
 
+// `err` can be ignore since it will connect lazily to rabbitmq
 conn, err := pubsub.NewConnection("connection-1", pubsub.ConnectionOptions{
     URI: "amqp://dev:dev@localhost:5672",
     LazyConnection: mo.Some(true),
@@ -68,6 +69,7 @@ import (
     "github.com/samber/mo"
 )
 
+// `err` can be ignore since it will connect lazily to rabbitmq
 conn, err := pubsub.NewConnection("connection-1", pubsub.ConnectionOptions{
     URI: "amqp://dev:dev@localhost:5672",
     LazyConnection: mo.Some(true),

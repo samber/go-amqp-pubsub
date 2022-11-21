@@ -35,7 +35,7 @@ type Producer struct {
 }
 
 func NewProducer(conn *Connection, name string, opt ProducerOptions) *Producer {
-	doneCh := make(chan struct{}, 0)
+	doneCh := make(chan struct{})
 
 	p := &Producer{
 		conn:    conn,
