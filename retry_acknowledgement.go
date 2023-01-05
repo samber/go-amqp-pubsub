@@ -105,6 +105,14 @@ func (a *retryAcknowledger) retry(tag uint64, attempts int, ttl time.Duration) e
 
 	headers["x-retry-attempts"] = strconv.FormatInt(int64(attempts+1), 10)
 
+	if _, ok := headers["x-first-retry-exchange"]; !ok {
+		headers["x-first-retry-exchange"] = a.msg.Exchange
+	}
+
+	if _, ok := headers["x-first-retry-routing-key"]; !ok {
+		headers["x-first-retry-routing-key"] = a.msg.RoutingKey
+	}
+
 	msg := amqp.Publishing{
 		Headers:         headers,
 		ContentType:     a.msg.ContentType,

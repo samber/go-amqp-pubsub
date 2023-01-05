@@ -10,12 +10,14 @@ import (
 )
 
 const (
+	// @TODO: Using a different exchange would be a breaking change.
 	// deadLetterExchange     = "internal.dlx"
+	// retryExchange          = "internal.retry"
+
 	deadLetterExchange     = "amq.direct"
 	deadLetterExchangeKind = amqp.ExchangeDirect
-	// retryExchange          = "internal.retry"
-	retryExchange     = "amq.direct"
-	retryExchangeKind = amqp.ExchangeDirect
+	retryExchange          = "amq.direct"
+	retryExchangeKind      = amqp.ExchangeDirect
 )
 
 type ConsumerOptionsQueue struct {
@@ -242,7 +244,7 @@ func (c *Consumer) setupDeadLetter(channel *amqp.Channel) (map[string]any, error
 		deadLetterExchangeKind,
 		true,
 		false,
-		false,
+		false, // @TODO: should be `true` (breaking change)
 		false,
 		nil,
 	)
