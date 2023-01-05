@@ -38,7 +38,7 @@ import (
     "github.com/samber/mo"
 )
 
-// `err` can be ignore since it will connect lazily to rabbitmq
+// `err` can be ignored since it will connect lazily to rabbitmq
 conn, err := pubsub.NewConnection("connection-1", pubsub.ConnectionOptions{
     URI: "amqp://dev:dev@localhost:5672",
     LazyConnection: mo.Some(true),
@@ -123,6 +123,11 @@ consumer := pubsub.NewConsumer(conn, "example-consumer-1", pubsub.ConsumerOption
     // ...
     RetryStrategy:    mo.Some(pubsub.NewExponentialRetryStrategy(3, 3*time.Second, 2)), // will create a "product.onEdit.retry" queue
 })
+
+for msg := range consumer.Consume() {
+    // ...
+    msg.Reject(false)   // will retry 3 times with exponential backoff
+}
 ```
 
 #### Custom retry strategy
