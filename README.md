@@ -5,6 +5,7 @@
 - Resilient to network failure
 - Auto reconnect: recreate channels, bindings, producers, consumers...
 - Hot update of queue bindings (thread-safe)
+- Retry
 - Dead letter queue on message rejection
 
 ## How to
@@ -102,7 +103,63 @@ conn.Close()
 
 ### Consumer with pooling and batching
 
-See [examples/consumer-with-pool-and-batch.md](examples/consumer-with-pool-and-batch.md).
+See [examples/consumer-with-pool-and-batch](examples/consumer-with-pool-and-batch/main.go).
+
+### Consumer with retry strategy
+
+![Retry architecture](doc/retry.png)
+
+See [examples/consumer-with-retry.md](examples/consumer-with-retry/main.go).
+
+2 retry strategies are available:
+- Exponential backoff
+- Constant interval
+
+```go
+consumer := pubsub.NewConsumer(conn, "example-consumer-1", pubsub.ConsumerOptions{
+    Queue: pubsub.ConsumerOptionsQueue{
+        Name: "product.onEdit",
+    },
+    // ...
+    RetryStrategy:    mo.Some(pubsub.NewExponentialRetryStrategy(3, 3*time.Second, 2)), // will create a "product.onEdit.retry" queue
+})
+```
+
+#### Custom retry strategy
+
+Custom strategies can be provided to the consumer.
+
+```go
+type MyCustomRetryStrategy struct {}
+
+func NewMyCustomRetryStrategy() RetryStrategy {
+	return &MyCustomRetryStrategy{}
+}
+
+func (rs *MyCustomRetryStrategy) NextBackOff(msg *amqp.Delivery, attempts int) (time.Duration, bool) {
+    // retries until message get older than 5 minutes
+    if msg.Timestamp.Add(10*time.Second).After(time.Now()) {
+        return 10 * time.Second, true
+    }
+
+    return time.Duration{}, false
+}
+```
+
+#### Consistency
+
+On retry, the message is published into the retry queue then is acked from the initial queue. This 2 phases delivery is unsafe, since connection could drop during operation. With the `ConsistentRetry` policy, the steps will be embbeded into a transaction. Use it carefully because the delivery rate will be reduced by an order of magnitude.
+
+```go
+consumer := pubsub.NewConsumer(conn, "example-consumer-1", pubsub.ConsumerOptions{
+    Queue: pubsub.ConsumerOptionsQueue{
+        Name: "product.onEdit",
+    },
+    // ...
+    RetryStrategy:    mo.Some(pubsub.NewExponentialRetryStrategy(3, 3*time.Second, 2)),
+    RetryConsistency: mo.Some(pubsub.ConsistentRetry),
+})
+```
 
 ## Run examples
 
