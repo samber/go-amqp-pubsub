@@ -137,8 +137,8 @@ func NewMyCustomRetryStrategy() RetryStrategy {
 }
 
 func (rs *MyCustomRetryStrategy) NextBackOff(msg *amqp.Delivery, attempts int) (time.Duration, bool) {
-    // retries until message get older than 5 minutes
-    if msg.Timestamp.Add(10*time.Second).After(time.Now()) {
+    // retries every 10 seconds, until message get older than 5 minutes
+    if msg.Timestamp.Add(5*time.Minute).After(time.Now()) {
         return 10 * time.Second, true
     }
 

@@ -9,6 +9,15 @@ import (
 	"github.com/samber/mo"
 )
 
+const (
+	// deadLetterExchange     = "internal.dlx"
+	deadLetterExchange     = "amq.direct"
+	deadLetterExchangeKind = amqp.ExchangeDirect
+	// retryExchange          = "internal.retry"
+	retryExchange     = "amq.direct"
+	retryExchangeKind = amqp.ExchangeDirect
+)
+
 type ConsumerOptionsQueue struct {
 	Name string
 
@@ -41,8 +50,10 @@ type ConsumerOptions struct {
 	Message  ConsumerOptionsMessage
 
 	// optional arguments
-	EnableDeadLetter mo.Option[bool]       // default false
-	ConsumeArgs      mo.Option[amqp.Table] // default nil
+	EnableDeadLetter mo.Option[bool]             // default false
+	ConsumeArgs      mo.Option[amqp.Table]       // default nil
+	RetryStrategy    mo.Option[RetryStrategy]    // default no retry
+	RetryConsistency mo.Option[RetryConsistency] // default eventually consistent
 }
 
 type Consumer struct {
@@ -55,6 +66,8 @@ type Consumer struct {
 	done     *rpc[struct{}, struct{}]
 
 	bindingUpdates *rpc[lo.Tuple2[bool, ConsumerOptionsBinding], error]
+
+	retryProducer *Producer
 }
 
 func NewConsumer(conn *Connection, name string, opt ConsumerOptions) *Consumer {
@@ -71,6 +84,21 @@ func NewConsumer(conn *Connection, name string, opt ConsumerOptions) *Consumer {
 		done:     newRPC[struct{}, struct{}](doneCh),
 
 		bindingUpdates: newRPC[lo.Tuple2[bool, ConsumerOptionsBinding], error](bindingUpdatesCh),
+
+		retryProducer: nil,
+	}
+
+	if opt.RetryStrategy.IsPresent() {
+		c.retryProducer = NewProducer(
+			conn,
+			name+".retry",
+			ProducerOptions{
+				Exchange: ProducerOptionsExchange{
+					Name: retryExchange,
+					Kind: retryExchangeKind,
+				},
+			},
+		)
 	}
 
 	go c.lifecycle()
@@ -115,6 +143,11 @@ func (c *Consumer) lifecycle() {
 func (c *Consumer) Close() error {
 	_ = c.done.Send(struct{}{})
 	safeClose(c.done.C)
+
+	if c.retryProducer != nil {
+		_ = c.retryProducer.Close()
+	}
+
 	return nil
 }
 
@@ -177,6 +210,15 @@ func (c *Consumer) setupConsumer(conn *amqp.Connection) error {
 		}
 	}
 
+	// create retry queue if necessary
+	if c.options.RetryStrategy.IsPresent() {
+		err = c.setupRetry(channel)
+		if err != nil {
+			_ = channel.Close()
+			return err
+		}
+	}
+
 	err = c.onMessage(channel)
 	if err != nil {
 		_ = channel.Close()
@@ -189,14 +231,26 @@ func (c *Consumer) setupConsumer(conn *amqp.Connection) error {
 }
 
 func (c *Consumer) setupDeadLetter(channel *amqp.Channel) (map[string]any, error) {
-	deadLetterExchange := "amq.direct"
 	deadLetterQueueName := c.options.Queue.Name + ".deadLetter"
 	deadLetterArgs := map[string]any{
 		"x-dead-letter-exchange":    deadLetterExchange,
 		"x-dead-letter-routing-key": deadLetterQueueName,
 	}
 
-	_, err := channel.QueueDeclare(
+	err := channel.ExchangeDeclare(
+		deadLetterExchange,
+		deadLetterExchangeKind,
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = channel.QueueDeclare(
 		deadLetterQueueName,
 		true,
 		false,
@@ -221,6 +275,64 @@ func (c *Consumer) setupDeadLetter(channel *amqp.Channel) (map[string]any, error
 	}
 
 	return deadLetterArgs, nil
+}
+
+func (c *Consumer) setupRetry(channel *amqp.Channel) error {
+	retryQueueName := c.options.Queue.Name + ".retry"
+	retryArgs := map[string]any{
+		"x-dead-letter-exchange":    retryExchange,
+		"x-dead-letter-routing-key": c.options.Queue.Name,
+	}
+
+	err := channel.ExchangeDeclare(
+		retryExchange,
+		retryExchangeKind,
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+
+	_, err = channel.QueueDeclare(
+		retryQueueName,
+		c.options.Queue.Durable.OrElse(true),
+		c.options.Queue.AutoDelete.OrElse(false),
+		false,
+		false,
+		retryArgs,
+	)
+	if err != nil {
+		return err
+	}
+
+	// binding retry exchange->queue
+	err = channel.QueueBind(
+		retryQueueName,
+		retryQueueName,
+		retryExchange,
+		false,
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+
+	err = channel.QueueBind(
+		c.options.Queue.Name,
+		c.options.Queue.Name,
+		retryExchange,
+		false,
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (c *Consumer) onChannelEvent(conn *amqp.Connection, channel *amqp.Channel) {
@@ -291,6 +403,9 @@ func (c *Consumer) onBindingUpdate(channel *amqp.Channel, update lo.Tuple2[bool,
 	return nil
 }
 
+/**
+ * Message stream
+ */
 func (c *Consumer) onMessage(channel *amqp.Channel) error {
 	delivery, err := channel.Consume(
 		c.options.Queue.Name,
@@ -307,6 +422,16 @@ func (c *Consumer) onMessage(channel *amqp.Channel) error {
 
 	go func() {
 		for raw := range delivery {
+			if c.options.RetryStrategy.IsPresent() {
+				raw.Acknowledger = newRetryAcknowledger(
+					c.retryProducer,
+					c.options.Queue.Name+".retry",
+					c.options.RetryStrategy.MustGet(),
+					c.options.RetryConsistency.OrElse(EventuallyConsistentRetry),
+					raw,
+				)
+			}
+
 			c.delivery <- lo.ToPtr(raw)
 		}
 

@@ -22,8 +22,6 @@ const (
 	routingKeyProductRemoved string = "product.removed"
 )
 
-var productRk = []string{routingKeyProductCreated, routingKeyProductUpdated, routingKeyProductRemoved}
-
 func main() {
 	flag.Parse()
 

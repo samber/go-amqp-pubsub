@@ -67,6 +67,7 @@ func publishMessages(producer *pubsub.Producer) {
 	//		- docker-compose kill rabbitmq
 	//		- docker-compose up rabbitmq
 
+	time.Sleep(1 * time.Second)
 	for i := 0; i < 100000; i++ {
 		time.Sleep(100 * time.Microsecond)
 
