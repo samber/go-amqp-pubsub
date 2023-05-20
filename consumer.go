@@ -354,9 +354,9 @@ func (c *Consumer) onChannelEvent(conn *amqp.Connection, channel *amqp.Channel) 
 			err2 := c.setupConsumer(conn)
 			if err2 != nil {
 				logger("AMQP channel '%s': %s", c.name, err2.Error())
-				time.Sleep(1 * time.Second)
 				go func() {
 					// executed in a coroutine to avoid deadlock
+					time.Sleep(1 * time.Second)
 					onError <- nil
 				}()
 			}
