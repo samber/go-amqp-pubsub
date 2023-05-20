@@ -6,7 +6,7 @@ re: clean all
 # Build
 #
 build:
-	go build -v ./example/producer/*.go
+	go build -v ./...
 watch-build: deps
 	reflex -t 50ms -s -- sh -c 'echo \\nBUILDING && CGO_ENABLED=0 dlv --listen=:1234 --headless=true --accept-multiclient --api-version=2 debug ./example/producer/*.go --continue && echo Exited'
 
