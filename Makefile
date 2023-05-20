@@ -49,9 +49,9 @@ lint-fix:
 	golangci-lint run --fix --timeout 600s --max-same-issues 50 --path-prefix=./ ./...
 
 test:
-	gotest -v ./...
+	go test -race -v ./...
 watch-test: deps
-	reflex -t 50ms -s -- sh -c 'make test'
+	reflex -t 50ms -s -- sh -c 'gotest -race -v ./...'
 
 weight:
 	goweight
