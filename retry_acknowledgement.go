@@ -139,13 +139,13 @@ func (a *retryAcknowledger) retry(tag uint64, attempts int, ttl time.Duration) e
 
 		err = a.retryProducer.Publish(a.retryQueue, true, false, msg)
 		if err != nil {
-			a.retryProducer.channel.TxRollback()
+			_ = a.retryProducer.channel.TxRollback()
 			return err
 		}
 
 		err = a.parent.Ack(tag, false)
 		if err != nil {
-			a.retryProducer.channel.TxRollback()
+			_ = a.retryProducer.channel.TxRollback()
 			return err
 		}
 
