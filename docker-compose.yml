@@ -6,6 +6,8 @@ services:
     ports:
       - 5672:5672
       - 15672:15672
+    volumes:
+      - ./examples/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
     environment:
       - RABBITMQ_DEFAULT_USER=dev
       - RABBITMQ_DEFAULT_PASS=dev

@@ -3,6 +3,7 @@ package pubsub
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/samber/lo"
@@ -338,16 +339,26 @@ func (c *Consumer) setupRetry(channel *amqp.Channel) error {
 }
 
 func (c *Consumer) onChannelEvent(conn *amqp.Connection, channel *amqp.Channel) {
-	onClose := channel.NotifyClose(make(chan *amqp.Error))
+	onError := channel.NotifyClose(make(chan *amqp.Error))
 	onCancel := channel.NotifyCancel(make(chan string))
 
 	defer lo.Try0(func() { channel.Close() })
 
 	for {
 		select {
-		case err := <-onClose:
+		case err := <-onError:
 			if err != nil {
 				logger("AMQP channel '%s': %s", c.name, err.Error())
+			}
+
+			err2 := c.setupConsumer(conn)
+			if err2 != nil {
+				logger("AMQP channel '%s': %s", c.name, err2.Error())
+				time.Sleep(1 * time.Second)
+				go func() {
+					// executed in a coroutine to avoid deadlock
+					onError <- nil
+				}()
 			}
 
 			return

@@ -1,18 +1,27 @@
 
-# Pub/Sub framework for RabbitMQ and Go
+# Resilient Pub/Sub framework for RabbitMQ and Go
+
+[![tag](https://img.shields.io/github/tag/samber/go-amqp-pubsub.svg)](https://github.com/samber/go-amqp-pubsub/releases)
+![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.20.3-%23007d9c)
+[![GoDoc](https://godoc.org/github.com/samber/go-amqp-pubsub?status.svg)](https://pkg.go.dev/github.com/samber/go-amqp-pubsub)
+![Build Status](https://github.com/samber/go-amqp-pubsub/actions/workflows/test.yml/badge.svg)
+[![Go report](https://goreportcard.com/badge/github.com/samber/go-amqp-pubsub)](https://goreportcard.com/report/github.com/samber/go-amqp-pubsub)
+[![Coverage](https://img.shields.io/codecov/c/github/samber/go-amqp-pubsub)](https://codecov.io/gh/samber/go-amqp-pubsub)
+[![Contributors](https://img.shields.io/github/contributors/samber/go-amqp-pubsub)](https://github.com/samber/go-amqp-pubsub/graphs/contributors)
+[![License](https://img.shields.io/github/license/samber/go-amqp-pubsub)](./LICENSE)
 
 - Based on github.com/rabbitmq/amqp091-go driver
 - Resilient to network failure
 - Auto reconnect: recreate channels, bindings, producers, consumers...
 - Hot update of queue bindings (thread-safe)
-- Retry
-- Dead letter queue on message rejection
+- Optional retry queue on message rejection
+- Optional dead letter queue on message rejection
 
 ## How to
 
 During your tests, feel free to restart Rabbitmq. This library will reconnect automatically.
 
-### Connect
+### Connection
 
 ```go
 import pubsub "github.com/samber/go-amqp-pubsub"
@@ -193,9 +202,43 @@ Then trigger network failure, by restarting rabbitmq:
 docker-compose restart rabbitmq
 ```
 
-## Todo
+## 🤝 Contributing
 
-- Connection pooling (eg: 10 connections, 100 channels per connections)
+- Ping me on Twitter [@samuelberthe](https://twitter.com/samuelberthe) (DMs, mentions, whatever :))
+- Fork the [project](https://github.com/samber/oops)
+- Fix [open issues](https://github.com/samber/oops/issues) or request new features
+
+Don't hesitate ;)
+
+```bash
+# Install some dev dependencies
+make tools
+
+# Run tests
+make test
+# or
+make watch-test
+```
+
+### Todo
+
+- Connection pooling (eg: 10 connections, 100 channels per connection)
 - Better documentation
 - Testing + CI
 - BatchPublish + PublishWithConfirmation + BatchPublishWithConfirmation
+
+## 👤 Contributors
+
+![Contributors](https://contrib.rocks/image?repo=samber/oops)
+
+## 💫 Show your support
+
+Give a ⭐️ if this project helped you!
+
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/samber?style=for-the-badge)](https://github.com/sponsors/samber)
+
+## 📝 License
+
+Copyright © 2023 [Samuel Berthe](https://github.com/samber).
+
+This project is [MIT](./LICENSE) licensed.
