@@ -90,7 +90,7 @@ func (a *retryAcknowledger) Reject(tag uint64, requeue bool) error {
 	attempts := getAttemptsFromHeaders(&a.msg)
 
 	ttl, ok := a.retryer.NextBackOff(&a.msg, attempts)
-	if ok {
+	if ok && ttl >= 0 {
 		return a.retry(tag, attempts, ttl)
 	}
 
