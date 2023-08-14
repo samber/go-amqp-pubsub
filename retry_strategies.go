@@ -54,7 +54,7 @@ func (rs *ExponentialRetryStrategy) NextBackOff(msg *amqp.Delivery, attempts int
 	return time.Duration(ns), true
 }
 
-type ManualRetryStrategy struct {
+type LazyRetryStrategy struct {
 	maxRetry int
 }
 
@@ -62,13 +62,13 @@ type ManualRetryStrategy struct {
 // It will only retry if the message is rejected with a TTL.
 // This is useful if you want to retry the message manually with a custom TTL.
 // To do this, you should use the RejectWithBackOff function.
-func NewManualRetryStrategy(maxRetry int) RetryStrategy {
-	return &ManualRetryStrategy{
+func NewLazyRetryStrategy(maxRetry int) RetryStrategy {
+	return &LazyRetryStrategy{
 		maxRetry: maxRetry,
 	}
 }
 
-func (rs *ManualRetryStrategy) NextBackOff(msg *amqp.Delivery, attempts int) (time.Duration, bool) {
+func (rs *LazyRetryStrategy) NextBackOff(msg *amqp.Delivery, attempts int) (time.Duration, bool) {
 	if attempts >= rs.maxRetry {
 		return 0, false
 	}

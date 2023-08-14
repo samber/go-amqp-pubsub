@@ -1,22 +1,11 @@
 package pubsub
 
 import (
+	"strconv"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
-
-func SetMessageHeader(msg *amqp.Delivery, key string, value interface{}) {
-	if msg == nil {
-		return
-	}
-
-	if msg.Headers == nil {
-		msg.Headers = make(amqp.Table)
-	}
-
-	msg.Headers[key] = value
-}
 
 func GetMessageHeader[T any](msg *amqp.Delivery, key string) (value T, ok bool) {
 	if msg == nil {
@@ -32,8 +21,8 @@ func GetMessageHeader[T any](msg *amqp.Delivery, key string) (value T, ok bool) 
 	return value, ok
 }
 
-func GetNumberOfAttempts(msg *amqp.Delivery) (int, bool) {
-	return GetMessageHeader[int](msg, "x-retry-attempts")
+func GetNumberOfAttempts(msg *amqp.Delivery) string {
+	return strconv.FormatInt(int64(getAttemptsFromHeaders(msg)), 10)
 }
 
 func RejectWithBackOff(msg *amqp.Delivery, ttl time.Duration, requeue bool) error {

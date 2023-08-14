@@ -1,4 +1,3 @@
-
 # Resilient Pub/Sub framework for RabbitMQ and Go
 
 [![tag](https://img.shields.io/github/tag/samber/go-amqp-pubsub.svg)](https://github.com/samber/go-amqp-pubsub/releases)
@@ -120,9 +119,11 @@ See [examples/consumer-with-pool-and-batch](examples/consumer-with-pool-and-batc
 
 See [examples/consumer-with-retry.md](examples/consumer-with-retry/main.go).
 
-2 retry strategies are available:
+3 retry strategies are available:
+
 - Exponential backoff
 - Constant interval
+- Lazy retry
 
 ```go
 consumer := pubsub.NewConsumer(conn, "example-consumer-1", pubsub.ConsumerOptions{
