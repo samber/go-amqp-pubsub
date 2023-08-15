@@ -93,6 +93,6 @@ func consumeMessages(consumer *pubsub.Consumer) {
 func consumeMessage(index int, msg *amqp.Delivery) {
 	logrus.Infof("Consumed message [ID=%d, EX=%s, RK=%s, TIME=%s] %s", index, msg.Exchange, msg.RoutingKey, time.Now().Format("15:04:05.999"), string(msg.Body))
 
-	pubsub.RejectWithBackOff(msg, 5*time.Second, false)
+	pubsub.RejectWithRetry(msg, 5*time.Second)
 	//msg.Reject(false)
 }

@@ -15,7 +15,7 @@ const (
 	EventuallyConsistentRetry RetryConsistency = 1 // fast, at *least* once
 )
 
-func getAttemptsFromHeaders(msg *amqp.Delivery) int {
+func GetAttempts(msg *amqp.Delivery) int {
 	result := 0
 
 	ok := lo.Try0(func() {
@@ -37,6 +37,22 @@ func getAttemptsFromHeaders(msg *amqp.Delivery) int {
 	}
 
 	return result
+}
+
+func RejectWithRetry(msg *amqp.Delivery, ttl time.Duration) error {
+	acknowledger, ok := msg.Acknowledger.(*retryAcknowledger)
+	if !ok || ttl < 0 {
+		return msg.Reject(false)
+	}
+
+	attempts := GetAttempts(msg)
+
+	_, retryOk := acknowledger.retryer.NextBackOff(msg, attempts)
+	if retryOk {
+		return acknowledger.retry(msg.DeliveryTag, attempts, ttl)
+	}
+
+	return acknowledger.parent.Reject(msg.DeliveryTag, false)
 }
 
 type retryAcknowledger struct {
@@ -72,7 +88,7 @@ func (a *retryAcknowledger) Nack(tag uint64, multiple bool, requeue bool) error 
 		panic("requeue is not available with retry strategy")
 	}
 
-	attempts := getAttemptsFromHeaders(&a.msg)
+	attempts := GetAttempts(&a.msg)
 
 	ttl, ok := a.retryer.NextBackOff(&a.msg, attempts)
 	if ok {
@@ -87,7 +103,7 @@ func (a *retryAcknowledger) Reject(tag uint64, requeue bool) error {
 		panic("requeue is not available with retry strategy")
 	}
 
-	attempts := getAttemptsFromHeaders(&a.msg)
+	attempts := GetAttempts(&a.msg)
 
 	ttl, ok := a.retryer.NextBackOff(&a.msg, attempts)
 	if ok && ttl >= 0 {

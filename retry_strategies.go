@@ -61,7 +61,7 @@ type LazyRetryStrategy struct {
 // ManualRetryStrategy is a retry strategy that will never automatically retry.
 // It will only retry if the message is rejected with a TTL.
 // This is useful if you want to retry the message manually with a custom TTL.
-// To do this, you should use the RejectWithBackOff function.
+// To do this, you should use the RejectWithRetry function.
 func NewLazyRetryStrategy(maxRetry int) RetryStrategy {
 	return &LazyRetryStrategy{
 		maxRetry: maxRetry,

@@ -125,6 +125,10 @@ See [examples/consumer-with-retry.md](examples/consumer-with-retry/main.go).
 - Constant interval
 - Lazy retry
 
+#### Examples
+
+Exponential backoff:
+
 ```go
 consumer := pubsub.NewConsumer(conn, "example-consumer-1", pubsub.ConsumerOptions{
     Queue: pubsub.ConsumerOptionsQueue{
@@ -137,6 +141,41 @@ consumer := pubsub.NewConsumer(conn, "example-consumer-1", pubsub.ConsumerOption
 for msg := range consumer.Consume() {
     // ...
     msg.Reject(false)   // will retry 3 times with exponential backoff
+}
+```
+
+Lazy retry:
+
+```go
+consumer := pubsub.NewConsumer(conn, "example-consumer-1", pubsub.ConsumerOptions{
+    Queue: pubsub.ConsumerOptionsQueue{
+        Name: "product.onEdit",
+    },
+    // ...
+    RetryStrategy:    mo.Some(pubsub.NewLazyRetryStrategy(3)), // will create a "product.onEdit.retry" queue
+})
+
+for msg := range consumer.Consume() {
+    // ...
+    
+	err := json.Unmarshal(body, &object)
+    if err != nil {
+        // retry is not necessary
+        msg.Reject(false)
+        continue
+    }
+
+    // ...
+
+    err = sql.Exec(query)
+    if err != nil {
+        // retry on network error
+        pubsub.RejectWithRetry(msg, 10*time.Second)
+        continue
+    }
+
+    // ...
+    msg.Ack(false)
 }
 ```
 
