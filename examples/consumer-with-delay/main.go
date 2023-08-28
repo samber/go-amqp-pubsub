@@ -57,7 +57,7 @@ func main() {
 			PrefetchCount: mo.Some(1000),
 		},
 		EnableDeadLetter: mo.Some(true),
-		Delay:            mo.Some(5 * time.Second),
+		Defer:            mo.Some(5 * time.Second),
 	})
 
 	logrus.Info("***** Let's go! ***** ")
