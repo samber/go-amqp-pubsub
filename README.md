@@ -215,6 +215,19 @@ consumer := pubsub.NewConsumer(conn, "example-consumer-1", pubsub.ConsumerOption
 })
 ```
 
+You can also Delay the consumption of your messages if needed. The message will instead be sent to the .delay queue, expire and then go the initial queue.
+This case can be useful if you want to wait for independent process to finish before consumming your message.
+
+```go
+consumer := pubsub.NewConsumer(conn, "example-consumer-1", pubsub.ConsumerOptions{
+    Queue: pubsub.ConsumerOptionsQueue{
+        Name: "product.onEdit",
+    },
+    // ...
+    Delay:            mo.Some(5 * time.Second),
+})
+```
+
 ## Run examples
 
 ```sh
