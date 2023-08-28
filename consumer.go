@@ -20,7 +20,6 @@ const (
 	retryExchange          = "amq.direct"
 	retryExchangeKind      = amqp.ExchangeDirect
 	deferExchange          = "amq.direct"
-	deferExchangeKind      = amqp.ExchangeDirect
 )
 
 type ConsumerOptionsQueue struct {
@@ -64,11 +63,11 @@ type ConsumerOptions struct {
 
 type QueueSetupExchangeOptions struct {
 	name       string
-	kind       string
-	durable    bool
-	autoDelete bool
-	internal   bool
-	noWait     bool
+	kind       mo.Option[string]
+	durable    mo.Option[bool]
+	autoDelete mo.Option[bool]
+	internal   mo.Option[bool]
+	noWait     mo.Option[bool]
 }
 
 type QueueSetupQueueOptions struct {
@@ -291,11 +290,11 @@ func (c *Consumer) setupQueue(channel *amqp.Channel, opts QueueSetupOptions, per
 	if declareExchange {
 		err := channel.ExchangeDeclare(
 			opts.Exchange.name,
-			opts.Exchange.kind,
-			opts.Exchange.durable,
-			opts.Exchange.autoDelete,
-			opts.Exchange.internal,
-			opts.Exchange.noWait,
+			opts.Exchange.kind.MustGet(),
+			opts.Exchange.durable.OrElse(true),
+			opts.Exchange.autoDelete.OrElse(false),
+			opts.Exchange.internal.OrElse(false),
+			opts.Exchange.noWait.OrElse(false),
 			nil,
 		)
 		if err != nil {
@@ -349,11 +348,11 @@ func (c *Consumer) setupDeadLetter(channel *amqp.Channel) (map[string]any, error
 	opts := QueueSetupOptions{
 		Exchange: QueueSetupExchangeOptions{
 			name:       deadLetterExchange,
-			kind:       deadLetterExchangeKind,
-			durable:    true,
-			autoDelete: false,
-			internal:   false, // @TODO: should be `true` (breaking change)
-			noWait:     false,
+			kind:       mo.Some(deadLetterExchangeKind),
+			durable:    mo.Some(true),
+			autoDelete: mo.Some(false),
+			internal:   mo.Some(false), // @TODO: should be `true` (breaking change)
+			noWait:     mo.Some(false),
 		},
 		Queue: QueueSetupQueueOptions{
 			name:       deadLetterQueueName,
@@ -375,11 +374,11 @@ func (c *Consumer) setupRetry(channel *amqp.Channel) error {
 	opts := QueueSetupOptions{
 		Exchange: QueueSetupExchangeOptions{
 			name:       retryExchange,
-			kind:       retryExchangeKind,
-			durable:    true,
-			autoDelete: false,
-			internal:   false,
-			noWait:     false,
+			kind:       mo.Some(retryExchangeKind),
+			durable:    mo.Some(true),
+			autoDelete: mo.Some(false),
+			internal:   mo.Some(false),
+			noWait:     mo.Some(false),
 		},
 		Queue: QueueSetupQueueOptions{
 			name:       c.options.Queue.Name + ".retry",
@@ -402,12 +401,7 @@ func (c *Consumer) setupRetry(channel *amqp.Channel) error {
 func (c *Consumer) setupDefer(channel *amqp.Channel, delay time.Duration) error {
 	opts := QueueSetupOptions{
 		Exchange: QueueSetupExchangeOptions{
-			name:       deferExchange,
-			kind:       deferExchangeKind,
-			durable:    true,
-			autoDelete: false,
-			internal:   false,
-			noWait:     false,
+			name: deferExchange,
 		},
 		Queue: QueueSetupQueueOptions{
 			name:       c.options.Queue.Name + ".defer",
