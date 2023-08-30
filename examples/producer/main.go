@@ -45,8 +45,8 @@ func main() {
 
 	producer := pubsub.NewProducer(conn, "example-producer-1", pubsub.ProducerOptions{
 		Exchange: pubsub.ProducerOptionsExchange{
-			Name: "product.event",
-			Kind: pubsub.ExchangeKindTopic,
+			Name: mo.Some("product.event"),
+			Kind: mo.Some(pubsub.ExchangeKindTopic),
 		},
 	})
 

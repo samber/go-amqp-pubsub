@@ -10,8 +10,8 @@ import (
 )
 
 type ProducerOptionsExchange struct {
-	Name string
-	Kind ExchangeKind
+	Name mo.Option[string]       // default "amq.direct"
+	Kind mo.Option[ExchangeKind] // default "direct"
 
 	// optional arguments
 	Durable    mo.Option[bool]       // default true
@@ -102,8 +102,8 @@ func (p *Producer) setupProducer(conn *amqp.Connection) error {
 
 	// create exchange if not exist
 	err = channel.ExchangeDeclare(
-		p.options.Exchange.Name,
-		string(p.options.Exchange.Kind),
+		p.options.Exchange.Name.OrElse("amq.direct"),
+		string(p.options.Exchange.Kind.OrElse(ExchangeKindDirect)),
 		p.options.Exchange.Durable.OrElse(true),
 		p.options.Exchange.AutoDelete.OrElse(false),
 		p.options.Exchange.Internal.OrElse(false),
@@ -154,7 +154,7 @@ func (p *Producer) PublishWithContext(ctx context.Context, routingKey string, ma
 
 	return p.channel.PublishWithContext(
 		ctx,
-		p.options.Exchange.Name,
+		p.options.Exchange.Name.OrElse("amq.direct"),
 		routingKey,
 		mandatory,
 		immediate,
@@ -169,7 +169,7 @@ func (p *Producer) PublishWithDeferredConfirmWithContext(ctx context.Context, ro
 
 	return p.channel.PublishWithDeferredConfirmWithContext(
 		ctx,
-		p.options.Exchange.Name,
+		p.options.Exchange.Name.OrElse("amq.direct"),
 		routingKey,
 		mandatory,
 		immediate,
