@@ -219,6 +219,8 @@ consumer := pubsub.NewConsumer(conn, "example-consumer-1", pubsub.ConsumerOption
 
 ![](./doc/defer.png)
 
+See [examples/consumer-with-delay](examples/consumer-with-delay/main.go).
+
 On publishing, the first consumption of the message can be delayed. The message will instead be sent to the .defer queue, expire, and then go to the initial queue.
 
 ```go
