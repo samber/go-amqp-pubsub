@@ -118,7 +118,7 @@ See [examples/consumer-with-pool-and-batch](examples/consumer-with-pool-and-batc
 
 ![Retry architecture](doc/retry.png)
 
-See [examples/consumer-with-retry.md](examples/consumer-with-retry/main.go).
+See [examples/consumer-with-retry](examples/consumer-with-retry/main.go).
 
 3 retry strategies are available:
 
