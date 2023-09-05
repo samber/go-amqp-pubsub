@@ -215,8 +215,11 @@ consumer := pubsub.NewConsumer(conn, "example-consumer-1", pubsub.ConsumerOption
 })
 ```
 
-You can also Delay the consumption of your messages if needed. The message will instead be sent to the .defer queue, expire and then go the initial queue.
-This case can be useful if you want to wait for independent process to finish before consumming your message.
+### Defer message consumption
+
+![](./doc/defer.png)
+
+On publishing, the first consumption of the message can be delayed. The message will instead be sent to the .defer queue, expire, and then go to the initial queue.
 
 ```go
 consumer := pubsub.NewConsumer(conn, "example-consumer-1", pubsub.ConsumerOptions{
