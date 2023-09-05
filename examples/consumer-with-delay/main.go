@@ -1,12 +1,12 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	pubsub "github.com/samber/go-amqp-pubsub"
+	"github.com/samber/lo"
 	"github.com/samber/mo"
 	"github.com/sirupsen/logrus"
 )
@@ -14,12 +14,12 @@ import (
 var rabbitmqURI = flag.String("rabbitmq-uri", "amqp://dev:dev@localhost:5672", "RabbitMQ URI")
 
 const (
+	queueName string = "product.onEdit"
+
 	routingKeyProductCreated string = "product.created"
 	routingKeyProductUpdated string = "product.updated"
 	routingKeyProductRemoved string = "product.removed"
 )
-
-var productRk = []string{routingKeyProductCreated, routingKeyProductUpdated, routingKeyProductRemoved}
 
 func main() {
 	flag.Parse()
@@ -43,50 +43,54 @@ func main() {
 		// panic(err)
 	}
 
-	producer := pubsub.NewProducer(conn, "example-producer-1", pubsub.ProducerOptions{
-		Exchange: pubsub.ProducerOptionsExchange{
-			Name: mo.Some("product.event"),
-			Kind: mo.Some(pubsub.ExchangeKindTopic),
+	consumer := pubsub.NewConsumer(conn, "example-consumer-1", pubsub.ConsumerOptions{
+		Queue: pubsub.ConsumerOptionsQueue{
+			Name: queueName,
 		},
+		Bindings: []pubsub.ConsumerOptionsBinding{
+			// crud
+			{ExchangeName: "product.event", RoutingKey: "product.created"},
+			{ExchangeName: "product.event", RoutingKey: "product.updated"},
+			{ExchangeName: "product.event", RoutingKey: "product.removed"},
+		},
+		Message: pubsub.ConsumerOptionsMessage{
+			PrefetchCount: mo.Some(1000),
+		},
+		EnableDeadLetter: mo.Some(true),
+		Defer:            mo.Some(5 * time.Second),
 	})
 
 	logrus.Info("***** Let's go! ***** ")
 
-	publishMessages(producer)
+	consumeMessages(consumer)
 
 	logrus.Info("***** Finished! ***** ")
 
-	producer.Close()
+	consumer.Close()
 	conn.Close()
 
 	logrus.Info("***** Closed! ***** ")
 }
 
-func publishMessages(producer *pubsub.Producer) {
+func consumeMessages(consumer *pubsub.Consumer) {
 	// Feel free to kill RabbitMQ and restart it, to see what happens ;)
 	//		- docker-compose kill rabbitmq
 	//		- docker-compose up rabbitmq
 
-	time.Sleep(1 * time.Second)
-	for i := 0; i < 100000; i++ {
-		time.Sleep(100 * time.Microsecond)
+	channel := consumer.Consume()
 
-		routingKey := productRk[i%len(productRk)]
-
-		body, _ := json.Marshal(map[string]interface{}{
-			"id":   i,
-			"name": "tomatoes",
+	i := 0
+	for msg := range channel {
+		lo.Try0(func() { // handle exceptions
+			consumeMessage(i, msg)
 		})
 
-		err := producer.Publish(routingKey, false, false, amqp.Publishing{
-			ContentType:  "application/json",
-			DeliveryMode: amqp.Persistent,
-			Body:         body,
-		})
-		if err != nil {
-			logrus.Error(err)
-		} else {
-			logrus.Infof("Published message [RK=%s] %s", routingKey, string(body))
-		}
+		i++
 	}
+}
+
+func consumeMessage(index int, msg *amqp.Delivery) {
+	logrus.Infof("Consumed message [ID=%d, EX=%s, RK=%s, TIME=%s] %s", index, msg.Exchange, msg.RoutingKey, time.Now().Format("15:04:05.999"), string(msg.Body))
+
+	msg.Ack(false)
 }

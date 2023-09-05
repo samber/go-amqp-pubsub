@@ -11,14 +11,9 @@ import (
 )
 
 const (
-	// @TODO: Using a different exchange would be a breaking change.
-	// deadLetterExchange     = "internal.dlx"
-	// retryExchange          = "internal.retry"
-
-	deadLetterExchange     = "amq.direct"
-	deadLetterExchangeKind = amqp.ExchangeDirect
-	retryExchange          = "amq.direct"
-	retryExchangeKind      = amqp.ExchangeDirect
+// @TODO: Using a different exchange would be a breaking change.
+// deadLetterExchange     = "internal.dlx"
+// retryExchange          = "internal.retry"
 )
 
 type ConsumerOptionsQueue struct {
@@ -54,9 +49,33 @@ type ConsumerOptions struct {
 
 	// optional arguments
 	EnableDeadLetter mo.Option[bool]             // default false
+	Defer            mo.Option[time.Duration]    // default no Defer
 	ConsumeArgs      mo.Option[amqp.Table]       // default nil
 	RetryStrategy    mo.Option[RetryStrategy]    // default no retry
 	RetryConsistency mo.Option[RetryConsistency] // default eventually consistent
+}
+
+type QueueSetupExchangeOptions struct {
+	name       mo.Option[string]
+	kind       mo.Option[string]
+	durable    mo.Option[bool]
+	autoDelete mo.Option[bool]
+	internal   mo.Option[bool]
+	noWait     mo.Option[bool]
+}
+
+type QueueSetupQueueOptions struct {
+	name       string
+	durable    bool
+	autoDelete bool
+	exclusive  bool
+	noWait     bool
+	args       mo.Option[amqp.Table]
+}
+
+type QueueSetupOptions struct {
+	Exchange QueueSetupExchangeOptions
+	Queue    QueueSetupQueueOptions
 }
 
 type Consumer struct {
@@ -96,10 +115,7 @@ func NewConsumer(conn *Connection, name string, opt ConsumerOptions) *Consumer {
 			conn,
 			name+".retry",
 			ProducerOptions{
-				Exchange: ProducerOptionsExchange{
-					Name: retryExchange,
-					Kind: retryExchangeKind,
-				},
+				Exchange: ProducerOptionsExchange{},
 			},
 		)
 	}
@@ -198,10 +214,23 @@ func (c *Consumer) setupConsumer(conn *amqp.Connection) error {
 		return err
 	}
 
+	queueToBind := c.options.Queue.Name
+
+	// create defer queue if necessary
+	if c.options.Defer.IsPresent() {
+		err = c.setupDefer(channel, c.options.Defer.MustGet())
+		if err != nil {
+			_ = channel.Close()
+			return err
+		}
+
+		queueToBind = c.options.Queue.Name + ".defer"
+	}
+
 	// binding exchange->queue
 	for _, b := range c.options.Bindings {
 		err = channel.QueueBind(
-			c.options.Queue.Name,
+			queueToBind,
 			b.RoutingKey,
 			b.ExchangeName,
 			false,
@@ -233,67 +262,14 @@ func (c *Consumer) setupConsumer(conn *amqp.Connection) error {
 	return nil
 }
 
-func (c *Consumer) setupDeadLetter(channel *amqp.Channel) (map[string]any, error) {
-	deadLetterQueueName := c.options.Queue.Name + ".deadLetter"
-	deadLetterArgs := map[string]any{
-		"x-dead-letter-exchange":    deadLetterExchange,
-		"x-dead-letter-routing-key": deadLetterQueueName,
-	}
-
+func (c *Consumer) setupQueue(channel *amqp.Channel, opts QueueSetupOptions, bindQueueToDeadLetter bool) error {
 	err := channel.ExchangeDeclare(
-		deadLetterExchange,
-		deadLetterExchangeKind,
-		true,
-		false,
-		false, // @TODO: should be `true` (breaking change)
-		false,
-		nil,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = channel.QueueDeclare(
-		deadLetterQueueName,
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// binding dead-letter exchange->queue
-	err = channel.QueueBind(
-		deadLetterQueueName,
-		deadLetterQueueName,
-		deadLetterExchange,
-		false,
-		nil,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return deadLetterArgs, nil
-}
-
-func (c *Consumer) setupRetry(channel *amqp.Channel) error {
-	retryQueueName := c.options.Queue.Name + ".retry"
-	retryArgs := map[string]any{
-		"x-dead-letter-exchange":    retryExchange,
-		"x-dead-letter-routing-key": c.options.Queue.Name,
-	}
-
-	err := channel.ExchangeDeclare(
-		retryExchange,
-		retryExchangeKind,
-		true,
-		false,
-		false,
-		false,
+		opts.Exchange.name.OrElse("amq.direct"),
+		opts.Exchange.kind.OrElse(amqp.ExchangeDirect),
+		opts.Exchange.durable.OrElse(true),
+		opts.Exchange.autoDelete.OrElse(false),
+		opts.Exchange.internal.OrElse(false),
+		opts.Exchange.noWait.OrElse(false),
 		nil,
 	)
 	if err != nil {
@@ -301,22 +277,22 @@ func (c *Consumer) setupRetry(channel *amqp.Channel) error {
 	}
 
 	_, err = channel.QueueDeclare(
-		retryQueueName,
-		c.options.Queue.Durable.OrElse(true),
-		c.options.Queue.AutoDelete.OrElse(false),
-		false,
-		false,
-		retryArgs,
+		opts.Queue.name,
+		opts.Queue.durable,
+		opts.Queue.autoDelete,
+		opts.Queue.exclusive,
+		opts.Queue.noWait,
+		opts.Queue.args.OrElse(nil),
 	)
 	if err != nil {
 		return err
 	}
 
-	// binding retry exchange->queue
+	// binding exchange->queue
 	err = channel.QueueBind(
-		retryQueueName,
-		retryQueueName,
-		retryExchange,
+		opts.Queue.name,
+		opts.Queue.name,
+		opts.Exchange.name.OrElse("amq.direct"),
 		false,
 		nil,
 	)
@@ -324,18 +300,91 @@ func (c *Consumer) setupRetry(channel *amqp.Channel) error {
 		return err
 	}
 
-	err = channel.QueueBind(
-		c.options.Queue.Name,
-		c.options.Queue.Name,
-		retryExchange,
-		false,
-		nil,
-	)
-	if err != nil {
-		return err
+	if bindQueueToDeadLetter {
+		err = channel.QueueBind(
+			c.options.Queue.Name,
+			c.options.Queue.Name,
+			opts.Exchange.name.OrElse("amq.direct"),
+			false,
+			nil,
+		)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
+}
+
+func (c *Consumer) setupDeadLetter(channel *amqp.Channel) (map[string]any, error) {
+	deadLetterQueueName := c.options.Queue.Name + ".deadLetter"
+
+	args := amqp.Table{
+		"x-dead-letter-exchange":    "amq.direct",
+		"x-dead-letter-routing-key": deadLetterQueueName,
+	}
+
+	opts := QueueSetupOptions{
+		Exchange: QueueSetupExchangeOptions{
+			durable:    mo.Some(true),
+			autoDelete: mo.Some(false),
+			internal:   mo.Some(false), // @TODO: should be `true` (breaking change)
+			noWait:     mo.Some(false),
+		},
+		Queue: QueueSetupQueueOptions{
+			name:       deadLetterQueueName,
+			durable:    true,
+			autoDelete: false,
+			exclusive:  false,
+			noWait:     false,
+		},
+	}
+
+	return args, c.setupQueue(channel, opts, false)
+}
+
+func (c *Consumer) setupRetry(channel *amqp.Channel) error {
+	opts := QueueSetupOptions{
+		Exchange: QueueSetupExchangeOptions{
+			durable:    mo.Some(true),
+			autoDelete: mo.Some(false),
+			internal:   mo.Some(false),
+			noWait:     mo.Some(false),
+		},
+		Queue: QueueSetupQueueOptions{
+			name:       c.options.Queue.Name + ".retry",
+			durable:    c.options.Queue.Durable.OrElse(true),
+			autoDelete: c.options.Queue.AutoDelete.OrElse(false),
+			exclusive:  false,
+			noWait:     false,
+			args: mo.Some(amqp.Table{
+				"x-dead-letter-exchange":    "amq.direct",
+				"x-dead-letter-routing-key": c.options.Queue.Name,
+			}),
+		},
+	}
+
+	return c.setupQueue(channel, opts, true)
+}
+
+func (c *Consumer) setupDefer(channel *amqp.Channel, delay time.Duration) error {
+	opts := QueueSetupOptions{
+		Exchange: QueueSetupExchangeOptions{},
+		Queue: QueueSetupQueueOptions{
+			name:       c.options.Queue.Name + ".defer",
+			durable:    c.options.Queue.Durable.OrElse(true),
+			autoDelete: c.options.Queue.AutoDelete.OrElse(false),
+			exclusive:  false,
+			noWait:     false,
+			args: mo.Some(amqp.Table{
+				"x-dead-letter-exchange":    "amq.direct",
+				"x-dead-letter-routing-key": c.options.Queue.Name,
+				"x-message-ttl":             delay.Milliseconds(),
+			}),
+		},
+	}
+
+	return c.setupQueue(channel, opts, true)
 }
 
 func (c *Consumer) onChannelEvent(conn *amqp.Connection, channel *amqp.Channel) {
@@ -388,11 +437,17 @@ func (c *Consumer) onChannelEvent(conn *amqp.Connection, channel *amqp.Channel) 
 func (c *Consumer) onBindingUpdate(channel *amqp.Channel, update lo.Tuple2[bool, ConsumerOptionsBinding]) error {
 	adding, binding := update.Unpack()
 
+	queueToBind := c.options.Queue.Name
+
+	if c.options.Defer.IsPresent() {
+		queueToBind = c.options.Queue.Name + ".defer"
+	}
+
 	err := lo.TernaryF(
 		adding,
 		func() error {
 			return channel.QueueBind(
-				c.options.Queue.Name,
+				queueToBind,
 				binding.RoutingKey,
 				binding.ExchangeName,
 				false,
@@ -400,7 +455,7 @@ func (c *Consumer) onBindingUpdate(channel *amqp.Channel, update lo.Tuple2[bool,
 			)
 		}, func() error {
 			return channel.QueueUnbind(
-				c.options.Queue.Name,
+				queueToBind,
 				binding.RoutingKey,
 				binding.ExchangeName,
 				binding.Args.OrElse(nil),
@@ -410,7 +465,7 @@ func (c *Consumer) onBindingUpdate(channel *amqp.Channel, update lo.Tuple2[bool,
 
 	if err != nil {
 		_ = channel.Close()
-		return fmt.Errorf("failed to (un)bind queue '%s' to exchange '%s' using routing key '%s': %s", c.options.Queue.Name, binding.ExchangeName, binding.RoutingKey, err.Error())
+		return fmt.Errorf("failed to (un)bind queue '%s' to exchange '%s' using routing key '%s': %s", queueToBind, binding.ExchangeName, binding.RoutingKey, err.Error())
 	}
 
 	return nil
