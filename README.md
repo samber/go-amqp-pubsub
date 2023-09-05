@@ -15,6 +15,7 @@
 - Hot update of queue bindings (thread-safe)
 - Optional retry queue on message rejection
 - Optional dead letter queue on message rejection
+- Optional deferred message consumption
 
 ## How to
 
