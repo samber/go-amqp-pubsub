@@ -422,6 +422,18 @@ func (c *Consumer) reconnect(conn *amqp.Connection) {
 	}
 }
 
+func (c *Consumer) parseError(err *amqp.Error, conn *amqp.Connection) {
+	if err == nil {
+		return
+	}
+
+	logger("AMQP channel '%s': %s", c.name, err.Error())
+
+	if err.Recover {
+		c.reconnect(conn)
+	}
+}
+
 func (c *Consumer) onChannelEvent(conn *amqp.Connection, channel *amqp.Channel) {
 	onError := channel.NotifyClose(make(chan *amqp.Error))
 	onCancel := channel.NotifyCancel(make(chan string))
@@ -433,16 +445,13 @@ func (c *Consumer) onChannelEvent(conn *amqp.Connection, channel *amqp.Channel) 
 		case err := <-onError:
 			logger(ScopeChannel, c.name, "Channel canceled", map[string]any{"error": err.Error()})
 
-			c.reconnect(conn)
+			c.parseError(err, conn)
 
 			return
 		case msg := <-onCancel:
 			logger(ScopeChannel, c.name, "Channel canceled", map[string]any{"message": msg})
 
-			err := c.setupConsumer(conn)
-			if err != nil {
-				logger(ScopeConsumer, c.name, "Could not start consumer", map[string]any{"error": err.Error()})
-			}
+			c.reconnect(conn)
 
 			return
 
