@@ -410,6 +410,18 @@ func (c *Consumer) setupDefer(channel *amqp.Channel, delay time.Duration) error 
 	return c.setupQueue(channel, opts, true)
 }
 
+func (c *Consumer) reconnect(conn *amqp.Connection) {
+	err := c.setupConsumer(conn)
+	if err != nil {
+		logger("AMQP channel '%s': %s", c.name, err.Error())
+		go func() {
+			// executed in a coroutine to avoid deadlock
+			time.Sleep(1 * time.Second)
+			c.reconnect(conn)
+		}()
+	}
+}
+
 func (c *Consumer) onChannelEvent(conn *amqp.Connection, channel *amqp.Channel) {
 	onError := channel.NotifyClose(make(chan *amqp.Error))
 	onCancel := channel.NotifyCancel(make(chan string))
@@ -421,18 +433,9 @@ func (c *Consumer) onChannelEvent(conn *amqp.Connection, channel *amqp.Channel) 
 		case err := <-onError:
 			logger(ScopeChannel, c.name, "Channel canceled", map[string]any{"error": err.Error()})
 
-			err2 := c.setupConsumer(conn)
-			if err2 != nil {
-				logger(ScopeConsumer, c.name, "Could not start consumer", map[string]any{"error": err2.Error()})
-				go func() {
-					// executed in a coroutine to avoid deadlock
-					time.Sleep(1 * time.Second)
-					onError <- nil
-				}()
-			}
+			c.reconnect(conn)
 
 			return
-
 		case msg := <-onCancel:
 			logger(ScopeChannel, c.name, "Channel canceled", map[string]any{"message": msg})
 
