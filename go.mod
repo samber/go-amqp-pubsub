@@ -7,7 +7,6 @@ require (
 	github.com/rabbitmq/amqp091-go v1.8.1
 	github.com/samber/lo v1.35.0
 	github.com/samber/mo v1.5.1
-	go.uber.org/goleak v1.2.1
 )
 
 require (
