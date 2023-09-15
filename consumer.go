@@ -48,6 +48,7 @@ type ConsumerOptions struct {
 	Message  ConsumerOptionsMessage
 
 	// optional arguments
+	Metrics          ConsumerMetrics
 	EnableDeadLetter mo.Option[bool]             // default false
 	Defer            mo.Option[time.Duration]    // default no Defer
 	ConsumeArgs      mo.Option[amqp.Table]       // default nil
