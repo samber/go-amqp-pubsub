@@ -15,7 +15,6 @@ type ConnectionOptions struct {
 	Config amqp.Config
 
 	// optional arguments
-	MetricNamespace   mo.Option[string]        // default no namespace
 	ReconnectInterval mo.Option[time.Duration] // default 2s
 	LazyConnection    mo.Option[bool]          // default false
 }
