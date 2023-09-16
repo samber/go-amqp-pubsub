@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/samber/lo"
 	"github.com/samber/mo"
@@ -48,7 +49,7 @@ type ConsumerOptions struct {
 	Message  ConsumerOptionsMessage
 
 	// optional arguments
-	Metrics          ConsumerMetrics
+	Metrics          ConsumerOptionsMetrics
 	EnableDeadLetter mo.Option[bool]             // default false
 	Defer            mo.Option[time.Duration]    // default no Defer
 	ConsumeArgs      mo.Option[amqp.Table]       // default nil
@@ -91,6 +92,8 @@ type Consumer struct {
 	bindingUpdates *rpc[lo.Tuple2[bool, ConsumerOptionsBinding], error]
 
 	retryProducer *Producer
+
+	metrics []*metric
 }
 
 func NewConsumer(conn *Connection, name string, opt ConsumerOptions) *Consumer {
@@ -109,6 +112,8 @@ func NewConsumer(conn *Connection, name string, opt ConsumerOptions) *Consumer {
 		bindingUpdates: newRPC[lo.Tuple2[bool, ConsumerOptionsBinding], error](bindingUpdatesCh),
 
 		retryProducer: nil,
+
+		metrics: opt.Metrics.metrics(name),
 	}
 
 	if opt.RetryStrategy.IsPresent() {
@@ -124,6 +129,18 @@ func NewConsumer(conn *Connection, name string, opt ConsumerOptions) *Consumer {
 	go c.lifecycle()
 
 	return &c
+}
+
+func (svc *Consumer) Describe(ch chan<- *prometheus.Desc) {
+	for _, metric := range svc.metrics {
+		metric.Describe(ch)
+	}
+}
+
+func (svc *Consumer) Collect(ch chan<- prometheus.Metric) {
+	for _, metric := range svc.metrics {
+		metric.Collect(ch)
+	}
 }
 
 func (c *Consumer) lifecycle() {
