@@ -69,7 +69,7 @@ func (c *Connection) lifecycle() error {
 			case <-reconnect:
 				err := c.redial()
 				if err != nil {
-					logger("AMQP dial: %s", err.Error())
+					logger(ScopeConnection, c.name, "Connection failure", map[string]any{"error": err.Error()})
 				}
 
 				heartbeat <- struct{}{}
@@ -89,7 +89,7 @@ func (c *Connection) lifecycle() error {
 				if c.conn != nil {
 					err := c.conn.Close()
 					if err != nil {
-						logger("AMQP: %s", err.Error())
+						logger(ScopeConnection, c.name, "Disconnection failure", map[string]any{"error": err.Error()})
 					}
 
 					c.conn = nil

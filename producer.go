@@ -68,7 +68,7 @@ func (p *Producer) lifecycle() {
 		case conn := <-onConnect:
 			err := p.setupProducer(conn)
 			if err != nil {
-				logger("AMQP producer '%s': %s", p.name, err.Error())
+				logger(ScopeProducer, p.name, "Could not start producer", map[string]any{"error": err.Error()})
 				onDisconnect <- struct{}{}
 			}
 
@@ -128,17 +128,16 @@ func (p *Producer) handleCancel(conn *amqp.Connection, channel *amqp.Channel) {
 
 	select {
 	case err := <-onClose:
-		if err != nil {
-			logger("AMQP channel '%s': %s", p.name, err.Error())
-		}
+		logger(ScopeChannel, p.name, "Channel closed with error", map[string]any{"error": err.Error()})
+
 	case msg := <-onCancel:
-		logger("AMQP channel '%s': %v", p.name, msg)
+		logger(ScopeChannel, p.name, "Channel canceled", map[string]any{"message": msg})
 
 		lo.Try0(func() { channel.Close() })
 
 		err := p.setupProducer(conn)
 		if err != nil {
-			logger("AMQP producer '%s': %s", p.name, err.Error())
+			logger(ScopeProducer, p.name, "Could not start producer", map[string]any{"error": err.Error()})
 		}
 	}
 }

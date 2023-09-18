@@ -32,8 +32,6 @@ func main() {
 		logrus.Fatal("missing --rabbitmiq-uri parameter")
 	}
 
-	pubsub.SetLogger(logrus.Errorf)
-
 	conn, err := pubsub.NewConnection("example-connection-1", pubsub.ConnectionOptions{
 		URI: *rabbitmqURI,
 		Config: amqp.Config{

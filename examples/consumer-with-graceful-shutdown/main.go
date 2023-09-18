@@ -31,8 +31,6 @@ func main() {
 		logrus.Fatal("missing --rabbitmiq-uri parameter")
 	}
 
-	pubsub.SetLogger(logrus.Errorf)
-
 	conn, err := pubsub.NewConnection("example-connection-1", pubsub.ConnectionOptions{
 		URI: *rabbitmqURI,
 		Config: amqp.Config{
@@ -102,6 +100,11 @@ func consumeMessages(consumer *pubsub.Consumer) {
 
 func consumeMessage(index int, msg *amqp.Delivery) {
 	logrus.Infof("Consumed message [ID=%d, EX=%s, RK=%s] %s", index, msg.Exchange, msg.RoutingKey, string(msg.Body))
+
+	time.Sleep(50 * time.Millisecond)
+	if index == 50 {
+		time.Sleep(100 * time.Second)
+	}
 
 	// simulate timeout
 	// n := rand.Intn(20)

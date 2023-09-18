@@ -148,6 +148,11 @@ func (c *Consumer) lifecycle() {
 	onConnect := make(chan *amqp.Connection, 42)
 	onDisconnect := make(chan struct{}, 42)
 
+	defer func() {
+		safeClose(onConnect)
+		safeClose(onDisconnect)
+	}()
+
 	for {
 		select {
 		case conn := <-ch:
@@ -160,7 +165,7 @@ func (c *Consumer) lifecycle() {
 		case conn := <-onConnect:
 			err := c.setupConsumer(conn)
 			if err != nil {
-				logger("AMQP consumer '%s': %s", c.name, err.Error())
+				logger(ScopeConsumer, c.name, "Could not start consumer", map[string]any{"error": err.Error()})
 				onDisconnect <- struct{}{}
 			}
 
@@ -414,13 +419,11 @@ func (c *Consumer) onChannelEvent(conn *amqp.Connection, channel *amqp.Channel) 
 	for {
 		select {
 		case err := <-onError:
-			if err != nil {
-				logger("AMQP channel '%s': %s", c.name, err.Error())
-			}
+			logger(ScopeChannel, c.name, "Channel canceled", map[string]any{"error": err.Error()})
 
 			err2 := c.setupConsumer(conn)
 			if err2 != nil {
-				logger("AMQP channel '%s': %s", c.name, err2.Error())
+				logger(ScopeConsumer, c.name, "Could not start consumer", map[string]any{"error": err2.Error()})
 				go func() {
 					// executed in a coroutine to avoid deadlock
 					time.Sleep(1 * time.Second)
@@ -431,11 +434,11 @@ func (c *Consumer) onChannelEvent(conn *amqp.Connection, channel *amqp.Channel) 
 			return
 
 		case msg := <-onCancel:
-			logger("AMQP channel '%s': %v", c.name, msg)
+			logger(ScopeChannel, c.name, "Channel canceled", map[string]any{"message": msg})
 
 			err := c.setupConsumer(conn)
 			if err != nil {
-				logger("AMQP consumer '%s': %s", c.name, err.Error())
+				logger(ScopeConsumer, c.name, "Could not start consumer", map[string]any{"error": err.Error()})
 			}
 
 			return
@@ -443,7 +446,7 @@ func (c *Consumer) onChannelEvent(conn *amqp.Connection, channel *amqp.Channel) 
 		case update := <-c.bindingUpdates.C:
 			err := c.onBindingUpdate(channel, update.A)
 			if err != nil {
-				logger("AMQP consumer '%s': %s", c.name, err.Error())
+				logger(ScopeConsumer, c.name, "Could not change binding", map[string]any{"error": err.Error()})
 				update.B(err)
 			} else {
 				update.B(nil)

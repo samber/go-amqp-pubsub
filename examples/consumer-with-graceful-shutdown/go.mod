@@ -1,6 +1,8 @@
 module consumer
 
-go 1.19
+go 1.21
+
+toolchain go1.21.0
 
 require (
 	github.com/rabbitmq/amqp091-go v1.8.1

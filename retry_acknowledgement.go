@@ -32,7 +32,7 @@ func GetAttempts(msg *amqp.Delivery) int {
 		result = int(attempts)
 	})
 	if !ok {
-		logger("could not parse x-retry-attempts header")
+		logger(ScopeConsumer, "", "could not parse x-retry-attempts header", nil)
 		return 0
 	}
 
