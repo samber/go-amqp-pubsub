@@ -36,7 +36,7 @@ func main() {
 			Dial:      amqp.DefaultDial(time.Second),
 			Heartbeat: time.Second,
 		},
-		LazyConnection: mo.Some(false),
+		LazyConnection: mo.Some(true),
 	})
 	if err != nil {
 		// We ignore error, since it will reconnect automatically when available.
