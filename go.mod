@@ -1,6 +1,6 @@
 module github.com/samber/go-amqp-pubsub
 
-go 1.21
+go 1.18
 
 require (
 	github.com/google/uuid v1.3.0
