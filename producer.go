@@ -128,8 +128,11 @@ func (p *Producer) handleCancel(conn *amqp.Connection, channel *amqp.Channel) {
 
 	select {
 	case err := <-onClose:
-		logger(ScopeChannel, p.name, "Channel closed with error", map[string]any{"error": err.Error()})
-
+		if err != nil {
+			logger(ScopeChannel, p.name, "Channel closed with error", map[string]any{"error": err.Error()})
+		} else {
+			logger(ScopeChannel, p.name, "Channel closed", map[string]any{})
+		}
 	case msg := <-onCancel:
 		logger(ScopeChannel, p.name, "Channel canceled", map[string]any{"message": msg})
 
