@@ -3,6 +3,7 @@ package pubsub
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/samber/lo"
@@ -100,16 +101,30 @@ func (p *Producer) setupProducer(conn *amqp.Connection) error {
 		return err
 	}
 
-	// create exchange if not exist
-	err = channel.ExchangeDeclare(
-		p.options.Exchange.Name.OrElse("amq.direct"),
-		string(p.options.Exchange.Kind.OrElse(ExchangeKindDirect)),
-		p.options.Exchange.Durable.OrElse(true),
-		p.options.Exchange.AutoDelete.OrElse(false),
-		p.options.Exchange.Internal.OrElse(false),
-		p.options.Exchange.NoWait.OrElse(false),
-		p.options.Exchange.Args.OrElse(nil),
-	)
+	// check if exchange is reserved and pre-declared
+	if strings.HasPrefix(p.options.Exchange.Name.OrElse("amq.direct"), "amq.") {
+		err = channel.ExchangeDeclarePassive(
+			p.options.Exchange.Name.OrElse("amq.direct"),
+			string(p.options.Exchange.Kind.OrElse(ExchangeKindDirect)),
+			p.options.Exchange.Durable.OrElse(true),
+			p.options.Exchange.AutoDelete.OrElse(false),
+			p.options.Exchange.Internal.OrElse(false),
+			p.options.Exchange.NoWait.OrElse(false),
+			p.options.Exchange.Args.OrElse(nil),
+		)
+	} else {
+		// create exchange if not exist
+		err = channel.ExchangeDeclare(
+			p.options.Exchange.Name.OrElse("amq.direct"),
+			string(p.options.Exchange.Kind.OrElse(ExchangeKindDirect)),
+			p.options.Exchange.Durable.OrElse(true),
+			p.options.Exchange.AutoDelete.OrElse(false),
+			p.options.Exchange.Internal.OrElse(false),
+			p.options.Exchange.NoWait.OrElse(false),
+			p.options.Exchange.Args.OrElse(nil),
+		)
+	}
+
 	if err != nil {
 		_ = channel.Close()
 		return err
