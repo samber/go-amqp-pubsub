@@ -196,8 +196,17 @@ func (c *Consumer) lifecycle() {
 		case <-onDisconnect:
 			channel = c.closeChannel(channel)
 
+		case update := <-c.bindingUpdates.C:
+			err := c.onBindingUpdate(channel, update.A)
+			if err != nil {
+				logger(ScopeConsumer, c.name, "Could not change binding", map[string]any{"error": err.Error()})
+				update.B(err)
+			} else {
+				update.B(nil)
+			}
+
 		case req := <-c.done.C:
-			channel = c.closeChannel(channel) //nolint:ineffassign
+			channel = c.closeChannel(channel) //nolint:ineffassign,staticcheck
 
 			cancel()                          // first, remove from connection listeners
 			safeCloseChan(c.bindingUpdates.C) // second, stop updating queue bindings
