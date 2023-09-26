@@ -6,7 +6,6 @@ import (
 
 	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
-	"github.com/samber/lo"
 	"github.com/samber/mo"
 )
 
@@ -27,6 +26,7 @@ type Connection struct {
 	// should be a generic sync.Map
 	channelsMutex sync.Mutex
 	channels      map[string]chan *amqp.Connection
+	closeOnce     sync.Once
 	done          *rpc[struct{}, struct{}]
 }
 
@@ -40,6 +40,7 @@ func NewConnection(name string, opt ConnectionOptions) (*Connection, error) {
 
 		channelsMutex: sync.Mutex{},
 		channels:      map[string]chan *amqp.Connection{},
+		closeOnce:     sync.Once{},
 		done:          newRPC[struct{}, struct{}](doneCh),
 	}
 
@@ -49,42 +50,32 @@ func NewConnection(name string, opt ConnectionOptions) (*Connection, error) {
 }
 
 func (c *Connection) lifecycle() error {
-	heartbeat := make(chan struct{}, 1)
-	reconnect := make(chan struct{}, 1)
-
-	if c.options.LazyConnection.OrElse(false) {
-		reconnect <- struct{}{}
-	} else {
+	if !c.options.LazyConnection.OrElse(false) {
 		err := c.redial()
 		if err != nil {
 			return err
 		}
-
-		heartbeat <- struct{}{}
 	}
+
+	ticker := time.NewTicker(c.options.ReconnectInterval.OrElse(2 * time.Second))
 
 	go func() {
 		for {
 			select {
-			case <-reconnect:
-				err := c.redial()
-				if err != nil {
-					logger(ScopeConnection, c.name, "Connection failure", map[string]any{"error": err.Error()})
-				}
-
-				heartbeat <- struct{}{}
-
-			case <-heartbeat:
+			case <-ticker.C:
 				time.Sleep(c.options.ReconnectInterval.OrElse(2 * time.Second))
 
 				ko := c.IsClosed()
 				if ko {
-					reconnect <- struct{}{}
-				} else {
-					heartbeat <- struct{}{}
+					err := c.redial()
+					if err != nil {
+						logger(ScopeConnection, c.name, "Connection failure", map[string]any{"error": err.Error()})
+					}
 				}
 
 			case req := <-c.done.C:
+				ticker.Stop()
+
 				// disconnect
 				if c.conn != nil {
 					err := c.conn.Close()
@@ -110,8 +101,11 @@ func (c *Connection) lifecycle() error {
 }
 
 func (c *Connection) Close() error {
-	_ = c.done.Send(struct{}{})
-	safeClose(c.done.C)
+	c.closeOnce.Do(func() {
+		_ = c.done.Send(struct{}{})
+		safeCloseChan(c.done.C)
+	})
+
 	return nil
 }
 
@@ -146,20 +140,25 @@ func (c *Connection) IsClosed() bool {
 
 func (c *Connection) redial() error {
 	c.channelsMutex.Lock()
-	conn := c.conn
+	bak := c.conn
 	c.channelsMutex.Unlock()
 
-	if conn != nil {
-		lo.Try0(func() { conn.Close() }) // silent error
+	if bak != nil {
+		_ = bak.Close()
 	}
 
 	conn, err := amqp.DialConfig(c.options.URI, c.options.Config)
 
-	c.notifyChannels(conn)
-
 	if err != nil {
+		if conn != nil {
+			_ = conn.Close()
+		}
+		if bak != nil {
+			c.notifyChannels(nil)
+		}
 		c.conn = nil
 	} else {
+		c.notifyChannels(conn)
 		c.conn = conn
 	}
 

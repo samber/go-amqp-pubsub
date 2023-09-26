@@ -54,7 +54,7 @@ func main() {
 			{ExchangeName: "product.event", RoutingKey: "product.updated"},
 		},
 		Message: pubsub.ConsumerOptionsMessage{
-			PrefetchCount: mo.Some(1000),
+			PrefetchCount: mo.Some(0),
 		},
 		EnableDeadLetter: mo.Some(true),
 	})
@@ -75,6 +75,7 @@ func main() {
 
 	logrus.Info("***** Finished! ***** ")
 
+	// close again, just in case a segfault would be hidden in the lib
 	consumer.Close()
 	conn.Close()
 
@@ -101,14 +102,8 @@ func consumeMessages(consumer *pubsub.Consumer) {
 func consumeMessage(index int, msg *amqp.Delivery) {
 	logrus.Infof("Consumed message [ID=%d, EX=%s, RK=%s] %s", index, msg.Exchange, msg.RoutingKey, string(msg.Body))
 
-	time.Sleep(50 * time.Millisecond)
-	if index == 50 {
-		time.Sleep(100 * time.Second)
-	}
-
 	// simulate timeout
-	// n := rand.Intn(20)
-	// time.Sleep(time.Duration(n) * time.Second)
+	// time.Sleep(60 * time.Second)
 
 	if index%10 == 0 {
 		msg.Reject(false)

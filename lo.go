@@ -44,7 +44,7 @@ func (rpc *rpc[T, R]) Send(request T) R {
 // SafeClose protects against double-close panic.
 // Returns true on first close, only.
 // May be equivalent to calling `sync.Once{}.Do(func() { close(ch) })`.`
-func safeClose[T any](ch chan<- T) (justClosed bool) {
+func safeCloseChan[T any](ch chan<- T) (justClosed bool) {
 	defer func() {
 		if recover() != nil {
 			justClosed = false
@@ -53,4 +53,17 @@ func safeClose[T any](ch chan<- T) (justClosed bool) {
 
 	close(ch) // may panic
 	return true
+}
+
+/**
+ * See
+ */
+func drainChan[T any](ch <-chan T) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
+	}
 }
