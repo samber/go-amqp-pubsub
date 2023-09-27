@@ -50,7 +50,9 @@ func NewConnection(name string, opt ConnectionOptions) (*Connection, error) {
 }
 
 func (c *Connection) lifecycle() error {
-	if !c.options.LazyConnection.OrElse(false) {
+	lazyConnection := c.options.LazyConnection.OrElse(false)
+
+	if !lazyConnection {
 		err := c.redial()
 		if err != nil {
 			return err
@@ -60,24 +62,22 @@ func (c *Connection) lifecycle() error {
 	ticker := time.NewTicker(c.options.ReconnectInterval.OrElse(2 * time.Second))
 
 	go func() {
+		if lazyConnection {
+			_ = c.redial() // don't wait for the first tick
+		}
+
 		for {
 			select {
 			case <-ticker.C:
-				time.Sleep(c.options.ReconnectInterval.OrElse(2 * time.Second))
-
-				ko := c.IsClosed()
-				if ko {
-					err := c.redial()
-					if err != nil {
-						logger(ScopeConnection, c.name, "Connection failure", map[string]any{"error": err.Error()})
-					}
+				if c.IsClosed() {
+					_ = c.redial()
 				}
 
 			case req := <-c.done.C:
 				ticker.Stop()
 
 				// disconnect
-				if c.conn != nil {
+				if !c.IsClosed() {
 					err := c.conn.Close()
 					if err != nil {
 						logger(ScopeConnection, c.name, "Disconnection failure", map[string]any{"error": err.Error()})
@@ -150,6 +150,8 @@ func (c *Connection) redial() error {
 	conn, err := amqp.DialConfig(c.options.URI, c.options.Config)
 
 	if err != nil {
+		logger(ScopeConnection, c.name, "Connection failure", map[string]any{"error": err.Error()})
+
 		if conn != nil {
 			_ = conn.Close()
 		}
