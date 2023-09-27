@@ -25,3 +25,18 @@
 ## Handle message timeout
 
 - insert a timeout in a message
+
+## Handle consumer stop
+
+- create a consumer catching ctrl-c event
+- run producer
+- run a slow consumer (with buffered messages)
+- ctrl-c
+
+## Handle exchange/queue removal
+
+- run producer
+- run consumer
+- remove some bindings
+- remove queue
+- remove exchange

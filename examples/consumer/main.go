@@ -89,8 +89,7 @@ func consumeMessage(index int, msg *amqp.Delivery) {
 	logrus.Infof("Consumed message [ID=%d, EX=%s, RK=%s] %s", index, msg.Exchange, msg.RoutingKey, string(msg.Body))
 
 	// simulate timeout
-	// n := rand.Intn(20)
-	// time.Sleep(time.Duration(n) * time.Second)
+	// time.Sleep(100 * time.Second)
 
 	if index%10 == 0 {
 		msg.Reject(false)

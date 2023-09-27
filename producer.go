@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
-	"github.com/samber/lo"
 	"github.com/samber/mo"
 )
 
@@ -31,8 +32,10 @@ type Producer struct {
 	name    string
 	options ProducerOptions
 
-	channel *amqp.Channel
-	done    *rpc[struct{}, struct{}]
+	mu        sync.RWMutex
+	channel   *amqp.Channel
+	closeOnce sync.Once
+	done      *rpc[struct{}, struct{}]
 }
 
 func NewProducer(conn *Connection, name string, opt ProducerOptions) *Producer {
@@ -43,8 +46,10 @@ func NewProducer(conn *Connection, name string, opt ProducerOptions) *Producer {
 		name:    name,
 		options: opt,
 
-		channel: nil,
-		done:    newRPC[struct{}, struct{}](doneCh),
+		mu:        sync.RWMutex{},
+		channel:   nil,
+		closeOnce: sync.Once{},
+		done:      newRPC[struct{}, struct{}](doneCh),
 	}
 
 	go p.lifecycle()
@@ -53,32 +58,52 @@ func NewProducer(conn *Connection, name string, opt ProducerOptions) *Producer {
 }
 
 func (p *Producer) lifecycle() {
-	cancel, ch := p.conn.ListenConnection()
-	onConnect := make(chan *amqp.Connection, 42)
+	cancel, connectionListener := p.conn.ListenConnection()
+	onConnect := make(chan struct{}, 42)
 	onDisconnect := make(chan struct{}, 42)
+
+	var conn *amqp.Connection
 
 	for {
 		select {
-		case conn := <-ch:
+		case _conn := <-connectionListener:
+			conn = _conn
 			if conn != nil {
-				onConnect <- conn
+				onConnect <- struct{}{}
 			} else {
 				onDisconnect <- struct{}{}
 			}
 
-		case conn := <-onConnect:
-			err := p.setupProducer(conn)
+		case <-onConnect:
+			p.closeChannel()
+
+			if conn == nil || conn.IsClosed() {
+				continue
+			}
+
+			_channel, onChannelClosed, err := p.setupProducer(conn)
 			if err != nil {
 				logger(ScopeProducer, p.name, "Could not start producer", map[string]any{"error": err.Error()})
-				onDisconnect <- struct{}{}
+				time.Sleep(1 * time.Second) // retry in 1 second
+				onConnect <- struct{}{}
+			} else {
+				p.mu.Lock()
+				p.channel = _channel
+				p.mu.Unlock()
+
+				go func() {
+					// ok && err==nil -> channel closed
+					// ok && err!=nil -> channel error (connection error, etc...)
+					err, ok := <-onChannelClosed
+					if ok && err != nil {
+						logger(ScopeChannel, p.name, "Channel closed: "+err.Reason, map[string]any{"error": err.Error()})
+						onConnect <- struct{}{}
+					}
+				}()
 			}
 
 		case <-onDisconnect:
-			if p.channel != nil {
-				lo.Try0(func() { p.channel.Close() })
-
-				p.channel = nil
-			}
+			p.closeChannel()
 
 		case req := <-p.done.C:
 			cancel()
@@ -88,17 +113,29 @@ func (p *Producer) lifecycle() {
 	}
 }
 
+func (p *Producer) closeChannel() {
+	p.mu.Lock()
+	if p.channel != nil && !p.channel.IsClosed() {
+		p.channel.Close()
+		p.channel = nil
+	}
+	p.mu.Unlock()
+}
+
 func (p *Producer) Close() error {
-	_ = p.done.Send(struct{}{})
-	safeClose(p.done.C)
+	p.closeOnce.Do(func() {
+		_ = p.done.Send(struct{}{})
+		safeCloseChan(p.done.C)
+	})
+
 	return nil
 }
 
-func (p *Producer) setupProducer(conn *amqp.Connection) error {
+func (p *Producer) setupProducer(conn *amqp.Connection) (*amqp.Channel, <-chan *amqp.Error, error) {
 	// create a channel dedicated to this producer
 	channel, err := conn.Channel()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	// check if exchange is reserved and pre-declared
@@ -127,34 +164,10 @@ func (p *Producer) setupProducer(conn *amqp.Connection) error {
 
 	if err != nil {
 		_ = channel.Close()
-		return err
+		return nil, nil, err
 	}
 
-	p.channel = channel
-
-	go p.handleCancel(conn, channel)
-
-	return nil
-}
-
-func (p *Producer) handleCancel(conn *amqp.Connection, channel *amqp.Channel) {
-	onClose := channel.NotifyClose(make(chan *amqp.Error))
-	onCancel := channel.NotifyCancel(make(chan string))
-
-	select {
-	case err := <-onClose:
-		logger(ScopeChannel, p.name, "Channel closed with error", map[string]any{"error": err.Error()})
-
-	case msg := <-onCancel:
-		logger(ScopeChannel, p.name, "Channel canceled", map[string]any{"message": msg})
-
-		lo.Try0(func() { channel.Close() })
-
-		err := p.setupProducer(conn)
-		if err != nil {
-			logger(ScopeProducer, p.name, "Could not start producer", map[string]any{"error": err.Error()})
-		}
-	}
+	return channel, channel.NotifyClose(make(chan *amqp.Error)), nil
 }
 
 /**
@@ -162,6 +175,9 @@ func (p *Producer) handleCancel(conn *amqp.Connection, channel *amqp.Channel) {
  */
 
 func (p *Producer) PublishWithContext(ctx context.Context, routingKey string, mandatory bool, immediate bool, msg amqp.Publishing) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if p.channel == nil {
 		return fmt.Errorf("AMQP: channel '%s' not available", p.name)
 	}
@@ -177,6 +193,9 @@ func (p *Producer) PublishWithContext(ctx context.Context, routingKey string, ma
 }
 
 func (p *Producer) PublishWithDeferredConfirmWithContext(ctx context.Context, routingKey string, mandatory bool, immediate bool, msg amqp.Publishing) (*amqp.DeferredConfirmation, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
 	if p.channel == nil {
 		return nil, fmt.Errorf("AMQP: channel '%s' not available", p.name)
 	}

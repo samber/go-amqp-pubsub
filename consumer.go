@@ -85,10 +85,11 @@ type Consumer struct {
 	name    string
 	options ConsumerOptions
 
-	mu       sync.Mutex
-	delivery chan *amqp.Delivery
-	done     *rpc[struct{}, struct{}]
+	delivery  chan *amqp.Delivery
+	closeOnce sync.Once
+	done      *rpc[struct{}, struct{}]
 
+	mu             sync.RWMutex
 	bindingUpdates *rpc[lo.Tuple2[bool, ConsumerOptionsBinding], error]
 
 	retryProducer *Producer
@@ -105,10 +106,11 @@ func NewConsumer(conn *Connection, name string, opt ConsumerOptions) *Consumer {
 		name:    name,
 		options: opt,
 
-		mu:       sync.Mutex{},
-		delivery: make(chan *amqp.Delivery),
-		done:     newRPC[struct{}, struct{}](doneCh),
+		delivery:  make(chan *amqp.Delivery),
+		closeOnce: sync.Once{},
+		done:      newRPC[struct{}, struct{}](doneCh),
 
+		mu:             sync.RWMutex{},
 		bindingUpdates: newRPC[lo.Tuple2[bool, ConsumerOptionsBinding], error](bindingUpdatesCh),
 
 		retryProducer: nil,
@@ -144,60 +146,110 @@ func (svc *Consumer) Collect(ch chan<- prometheus.Metric) {
 }
 
 func (c *Consumer) lifecycle() {
-	cancel, ch := c.conn.ListenConnection()
-	onConnect := make(chan *amqp.Connection, 42)
+	cancel, connectionListener := c.conn.ListenConnection()
+	onConnect := make(chan struct{}, 42)
 	onDisconnect := make(chan struct{}, 42)
 
+	var conn *amqp.Connection
+	var channel *amqp.Channel
+
 	defer func() {
-		safeClose(onConnect)
-		safeClose(onDisconnect)
+		safeCloseChan(onConnect)
+		safeCloseChan(onDisconnect)
 	}()
 
 	for {
 		select {
-		case conn := <-ch:
+		case _conn := <-connectionListener:
+			conn = _conn
 			if conn != nil {
-				onConnect <- conn
+				onConnect <- struct{}{}
 			} else {
 				onDisconnect <- struct{}{}
 			}
 
-		case conn := <-onConnect:
-			err := c.setupConsumer(conn)
+		case <-onConnect:
+			channel = c.closeChannel(channel)
+
+			if conn == nil || conn.IsClosed() {
+				continue
+			}
+
+			_channel, onChannelClosed, err := c.setupConsumer(conn)
 			if err != nil {
 				logger(ScopeConsumer, c.name, "Could not start consumer", map[string]any{"error": err.Error()})
-				onDisconnect <- struct{}{}
+				time.Sleep(1 * time.Second) // retry in 1 second
+				onConnect <- struct{}{}
+			} else {
+				channel = _channel
+				go func() {
+					// ok && err==nil -> channel closed
+					// ok && err!=nil -> channel error (message timeout, connection error, etc...)
+					err, ok := <-onChannelClosed
+					if ok && err != nil {
+						logger(ScopeChannel, c.name, "Channel closed: "+err.Reason, map[string]any{"error": err.Error()})
+						onConnect <- struct{}{}
+					}
+				}()
 			}
 
 		case <-onDisconnect:
+			channel = c.closeChannel(channel)
+
+		case update := <-c.bindingUpdates.C:
+			err := c.onBindingUpdate(channel, update.A)
+			if err != nil {
+				logger(ScopeConsumer, c.name, "Could not change binding", map[string]any{"error": err.Error()})
+				update.B(err)
+			} else {
+				update.B(nil)
+			}
 
 		case req := <-c.done.C:
-			cancel()
-			safeClose(c.bindingUpdates.C)
-			safeClose(c.delivery)
+			channel = c.closeChannel(channel) //nolint:ineffassign,staticcheck
 
+			cancel()                          // first, remove from connection listeners
+			safeCloseChan(c.bindingUpdates.C) // second, stop updating queue bindings
+			drainChan(c.delivery)             // third, flush channel -- we don't requeue message since amqp will do it for us
+			safeCloseChan(c.delivery)         // last, stop consuming messages
+
+			// send response to rpc
 			req.B(struct{}{})
 			return
 		}
 	}
 }
 
-func (c *Consumer) Close() error {
-	_ = c.done.Send(struct{}{})
-	safeClose(c.done.C)
-
-	if c.retryProducer != nil {
-		_ = c.retryProducer.Close()
+func (c *Consumer) closeChannel(channel *amqp.Channel) *amqp.Channel {
+	if channel != nil && !channel.IsClosed() {
+		channel.Close()
 	}
+
+	// Just to be sure we won't read twice some messages.
+	// Also, it offers some garantee on message order on reconnect.
+	drainChan(c.delivery)
 
 	return nil
 }
 
-func (c *Consumer) setupConsumer(conn *amqp.Connection) error {
+func (c *Consumer) Close() error {
+	c.closeOnce.Do(func() {
+		_ = c.done.Send(struct{}{})
+		safeCloseChan(c.done.C)
+
+		if c.retryProducer != nil {
+			_ = c.retryProducer.Close()
+		}
+	})
+
+	return nil
+}
+
+func (c *Consumer) setupConsumer(conn *amqp.Connection) (*amqp.Channel, <-chan *amqp.Error, error) {
 	// create a channel dedicated to this consumer
 	channel, err := conn.Channel()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	// create dead-letter queue if necessary
@@ -207,7 +259,7 @@ func (c *Consumer) setupConsumer(conn *amqp.Connection) error {
 		deadLetterArgs, err2 := c.setupDeadLetter(channel)
 		if err2 != nil {
 			_ = channel.Close()
-			return err2
+			return nil, nil, err2
 		}
 
 		queueArgs = lo.Assign(queueArgs, deadLetterArgs)
@@ -224,7 +276,7 @@ func (c *Consumer) setupConsumer(conn *amqp.Connection) error {
 	)
 	if err != nil {
 		_ = channel.Close()
-		return err
+		return nil, nil, err
 	}
 
 	err = channel.Qos(
@@ -234,7 +286,7 @@ func (c *Consumer) setupConsumer(conn *amqp.Connection) error {
 	)
 	if err != nil {
 		_ = channel.Close()
-		return err
+		return nil, nil, err
 	}
 
 	queueToBind := c.options.Queue.Name
@@ -244,14 +296,17 @@ func (c *Consumer) setupConsumer(conn *amqp.Connection) error {
 		err = c.setupDefer(channel, c.options.Defer.MustGet())
 		if err != nil {
 			_ = channel.Close()
-			return err
+			return nil, nil, err
 		}
 
 		queueToBind = c.options.Queue.Name + ".defer"
 	}
 
 	// binding exchange->queue
-	for _, b := range c.options.Bindings {
+	c.mu.Lock()
+	bindings := c.options.Bindings
+	c.mu.Unlock()
+	for _, b := range bindings {
 		err = channel.QueueBind(
 			queueToBind,
 			b.RoutingKey,
@@ -261,7 +316,7 @@ func (c *Consumer) setupConsumer(conn *amqp.Connection) error {
 		)
 		if err != nil {
 			_ = channel.Close()
-			return err
+			return nil, nil, err
 		}
 	}
 
@@ -270,19 +325,17 @@ func (c *Consumer) setupConsumer(conn *amqp.Connection) error {
 		err = c.setupRetry(channel)
 		if err != nil {
 			_ = channel.Close()
-			return err
+			return nil, nil, err
 		}
 	}
 
 	err = c.onMessage(channel)
 	if err != nil {
 		_ = channel.Close()
-		return err
+		return nil, nil, err
 	}
 
-	go c.onChannelEvent(conn, channel)
-
-	return nil
+	return channel, channel.NotifyClose(make(chan *amqp.Error)), nil
 }
 
 func (c *Consumer) setupQueue(channel *amqp.Channel, opts QueueSetupOptions, bindQueueToDeadLetter bool) error {
@@ -408,51 +461,6 @@ func (c *Consumer) setupDefer(channel *amqp.Channel, delay time.Duration) error 
 	}
 
 	return c.setupQueue(channel, opts, true)
-}
-
-func (c *Consumer) onChannelEvent(conn *amqp.Connection, channel *amqp.Channel) {
-	onError := channel.NotifyClose(make(chan *amqp.Error))
-	onCancel := channel.NotifyCancel(make(chan string))
-
-	defer lo.Try0(func() { channel.Close() })
-
-	for {
-		select {
-		case err := <-onError:
-			logger(ScopeChannel, c.name, "Channel canceled", map[string]any{"error": err.Error()})
-
-			err2 := c.setupConsumer(conn)
-			if err2 != nil {
-				logger(ScopeConsumer, c.name, "Could not start consumer", map[string]any{"error": err2.Error()})
-				go func() {
-					// executed in a coroutine to avoid deadlock
-					time.Sleep(1 * time.Second)
-					onError <- nil
-				}()
-			}
-
-			return
-
-		case msg := <-onCancel:
-			logger(ScopeChannel, c.name, "Channel canceled", map[string]any{"message": msg})
-
-			err := c.setupConsumer(conn)
-			if err != nil {
-				logger(ScopeConsumer, c.name, "Could not start consumer", map[string]any{"error": err.Error()})
-			}
-
-			return
-
-		case update := <-c.bindingUpdates.C:
-			err := c.onBindingUpdate(channel, update.A)
-			if err != nil {
-				logger(ScopeConsumer, c.name, "Could not change binding", map[string]any{"error": err.Error()})
-				update.B(err)
-			} else {
-				update.B(nil)
-			}
-		}
-	}
 }
 
 func (c *Consumer) onBindingUpdate(channel *amqp.Channel, update lo.Tuple2[bool, ConsumerOptionsBinding]) error {
