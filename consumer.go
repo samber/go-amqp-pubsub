@@ -464,6 +464,10 @@ func (c *Consumer) setupDefer(channel *amqp.Channel, delay time.Duration) error 
 }
 
 func (c *Consumer) onBindingUpdate(channel *amqp.Channel, update lo.Tuple2[bool, ConsumerOptionsBinding]) error {
+	if channel == nil || channel.IsClosed() {
+		return fmt.Errorf("Could not change binding: channel closed")
+	}
+
 	adding, binding := update.Unpack()
 
 	queueToBind := c.options.Queue.Name
