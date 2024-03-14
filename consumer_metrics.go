@@ -5,50 +5,50 @@ import (
 	"github.com/samber/mo"
 )
 
-func NewConsumerOptionsMetricsThresholdWarning(v float64) consumerOptionsMetricsThreshold {
-	return consumerOptionsMetricsThreshold{
+func NewConsumerOptionsMetricsThresholdWarning(v float64) ConsumerOptionsMetricsThreshold {
+	return ConsumerOptionsMetricsThreshold{
 		warning: mo.Some(mo.Left[float64, func() float64](v)),
 	}
 }
 
-func NewConsumerOptionsMetricsThresholdError(v float64) consumerOptionsMetricsThreshold {
-	return consumerOptionsMetricsThreshold{
+func NewConsumerOptionsMetricsThresholdError(v float64) ConsumerOptionsMetricsThreshold {
+	return ConsumerOptionsMetricsThreshold{
 		eRror: mo.Some(mo.Left[float64, func() float64](v)),
 	}
 }
 
-func NewConsumerOptionsMetricsThresholdWarningAndError(v1 float64, v2 float64) consumerOptionsMetricsThreshold {
-	return consumerOptionsMetricsThreshold{
+func NewConsumerOptionsMetricsThresholdWarningAndError(v1 float64, v2 float64) ConsumerOptionsMetricsThreshold {
+	return ConsumerOptionsMetricsThreshold{
 		warning: mo.Some(mo.Left[float64, func() float64](v1)),
 		eRror:   mo.Some(mo.Left[float64, func() float64](v2)),
 	}
 }
 
-func NewConsumerOptionsMetricsThresholdWarningFunc(f func() float64) consumerOptionsMetricsThreshold {
-	return consumerOptionsMetricsThreshold{
+func NewConsumerOptionsMetricsThresholdWarningFunc(f func() float64) ConsumerOptionsMetricsThreshold {
+	return ConsumerOptionsMetricsThreshold{
 		warning: mo.Some(mo.Right[float64, func() float64](f)),
 	}
 }
 
-func NewConsumerOptionsMetricsThresholdErrorFunc(f func() float64) consumerOptionsMetricsThreshold {
-	return consumerOptionsMetricsThreshold{
+func NewConsumerOptionsMetricsThresholdErrorFunc(f func() float64) ConsumerOptionsMetricsThreshold {
+	return ConsumerOptionsMetricsThreshold{
 		eRror: mo.Some(mo.Right[float64, func() float64](f)),
 	}
 }
 
-func NewConsumerOptionsMetricsThresholdWarningFuncAndErrorFunc(f1 func() float64, f2 func() float64) consumerOptionsMetricsThreshold {
-	return consumerOptionsMetricsThreshold{
+func NewConsumerOptionsMetricsThresholdWarningFuncAndErrorFunc(f1 func() float64, f2 func() float64) ConsumerOptionsMetricsThreshold {
+	return ConsumerOptionsMetricsThreshold{
 		warning: mo.Some(mo.Right[float64, func() float64](f1)),
 		eRror:   mo.Some(mo.Right[float64, func() float64](f2)),
 	}
 }
 
-type consumerOptionsMetricsThreshold struct {
+type ConsumerOptionsMetricsThreshold struct {
 	warning mo.Option[mo.Either[float64, func() float64]]
 	eRror   mo.Option[mo.Either[float64, func() float64]]
 }
 
-func (opt consumerOptionsMetricsThreshold) metrics(name string, description string, consumerName string) []*metric {
+func (opt ConsumerOptionsMetricsThreshold) metrics(name string, description string, consumerName string) []*metric {
 	metrics := []*metric{}
 
 	if w, ok := opt.warning.Get(); ok {
@@ -73,16 +73,16 @@ func (opt consumerOptionsMetricsThreshold) metrics(name string, description stri
 }
 
 type ConsumerOptionsMetrics struct {
-	QueueMessageBytesThreshold consumerOptionsMetricsThreshold
-	QueueMessagesThreshold     consumerOptionsMetricsThreshold
+	QueueMessageBytesThreshold ConsumerOptionsMetricsThreshold
+	QueueMessagesThreshold     ConsumerOptionsMetricsThreshold
 
-	DeadLetterQueueMessageBytesThreshold consumerOptionsMetricsThreshold
-	DeadLetterQueueMessagesThreshold     consumerOptionsMetricsThreshold
-	DeadLetterQueueMessageRateThreshold  consumerOptionsMetricsThreshold
+	DeadLetterQueueMessageBytesThreshold ConsumerOptionsMetricsThreshold
+	DeadLetterQueueMessagesThreshold     ConsumerOptionsMetricsThreshold
+	DeadLetterQueueMessageRateThreshold  ConsumerOptionsMetricsThreshold
 
-	RetryQueueMessageBytesThreshold consumerOptionsMetricsThreshold
-	RetryQueueMessagesThreshold     consumerOptionsMetricsThreshold
-	RetryQueueMessageRateThreshold  consumerOptionsMetricsThreshold
+	RetryQueueMessageBytesThreshold ConsumerOptionsMetricsThreshold
+	RetryQueueMessagesThreshold     ConsumerOptionsMetricsThreshold
+	RetryQueueMessageRateThreshold  ConsumerOptionsMetricsThreshold
 }
 
 func (opt ConsumerOptionsMetrics) metrics(consumerName string) []*metric {
