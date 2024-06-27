@@ -20,6 +20,7 @@ func SetLogger(cb func(scope Scope, name string, msg string, attributes map[stri
 }
 
 func DefaultLogger(scope Scope, name string, msg string, attributes map[string]any) {
+	// bearer:disable go_lang_logger_leak
 	log.Printf("AMQP %s '%s': %s", scope, name, msg)
 
 	// if attributes == nil {
