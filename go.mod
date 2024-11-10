@@ -7,7 +7,7 @@ require (
 	github.com/prometheus/client_golang v1.19.0
 	github.com/rabbitmq/amqp091-go v1.9.0
 	github.com/samber/lo v1.47.0
-	github.com/samber/mo v1.11.0
+	github.com/samber/mo v1.13.0
 	go.uber.org/goleak v1.3.0
 )
 
