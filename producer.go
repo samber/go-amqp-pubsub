@@ -116,7 +116,7 @@ func (p *Producer) lifecycle() {
 func (p *Producer) closeChannel() {
 	p.mu.Lock()
 	if p.channel != nil && !p.channel.IsClosed() {
-		p.channel.Close()
+		_ = p.channel.Close()
 		p.channel = nil
 	}
 	p.mu.Unlock()

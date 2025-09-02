@@ -222,7 +222,7 @@ func (c *Consumer) lifecycle() {
 
 func (c *Consumer) closeChannel(channel *amqp.Channel) *amqp.Channel {
 	if channel != nil && !channel.IsClosed() {
-		channel.Close()
+		_ = channel.Close()
 	}
 
 	// Just to be sure we won't read twice some messages.
