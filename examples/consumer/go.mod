@@ -3,7 +3,7 @@ module consumer
 go 1.19
 
 require (
-	github.com/rabbitmq/amqp091-go v1.10.0
+	github.com/rabbitmq/amqp091-go v1.14.0
 	github.com/samber/go-amqp-pubsub v0.0.0-20210710222824-c4781d5ae30d
 	github.com/samber/lo v1.52.0
 	github.com/samber/mo v1.16.0
